@@ -407,35 +407,49 @@ pub(crate) fn format_thread(d: f64, p: f64) -> String {
 /// The automatic ISO metric designation for a cylindrical face, using the same fit check as
 /// a thread feature without an explicit size. This query does not change the model.
 pub fn suggested_thread(st: &ModelState, p: Vec3) -> Result<String> {
-    thread_on(st, 0, p, None, None, false).map(|t| t.designation)
+    thread_on(st, 0, None, p, None, None, false).map(|t| t.designation)
 }
 
 /// A cosmetic thread on the cylindrical face at `p`. A `turned` (modelled) thread also fits a
 /// shaft thicker than it, which it turns down to its major diameter first.
-fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, length: Option<f64>, turned: bool) -> Result<ThreadInfo> {
-    thread_on_impl(st, feature, p, designation, length, false, turned)
+fn thread_on(
+    st: &ModelState,
+    feature: u64,
+    component: Option<u64>,
+    p: Vec3,
+    designation: Option<&str>,
+    length: Option<f64>,
+    turned: bool,
+) -> Result<ThreadInfo> {
+    thread_on_impl(st, feature, component, p, designation, length, false, turned)
 }
 
 // Tapped holes admit verified Unified and parallel pipe sizes; the separate Thread feature remains metric,
 // including when an untrusted design requests modelled geometry.
+#[allow(clippy::too_many_arguments)]
 fn thread_on_impl(
     st: &ModelState,
     feature: u64,
+    component: Option<u64>,
     p: Vec3,
     designation: Option<&str>,
     length: Option<f64>,
     tapped: bool,
     turned: bool,
 ) -> Result<ThreadInfo> {
-    let (body, cyl) = st
-        .bodies
-        .iter()
-        .filter_map(|b| kernel::cylinder_face_at(&b.body, p).map(|c| (b.name.clone(), c)))
-        .min_by(|a, b| {
-            let dist = |c: &kernel::CylinderFace| ((p - c.axis_point - c.axis * (p - c.axis_point).dot(c.axis)).len() - c.radius).abs();
-            dist(&a.1).total_cmp(&dist(&b.1))
-        })
-        .ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
+    // The feature's own component's bodies first (when it has one): components are modelled each in its own frame,
+    // so another one's part can sit at the same point (two inserted screws, both at the origin).
+    let nearest = |own: bool| {
+        st.bodies
+            .iter()
+            .filter(|b| !own || component.is_some_and(|c| b.component == c) || b.feature == feature)
+            .filter_map(|b| kernel::cylinder_face_at(&b.body, p).map(|c| (b.name.clone(), c)))
+            .min_by(|a, b| {
+                let dist = |c: &kernel::CylinderFace| ((p - c.axis_point - c.axis * (p - c.axis_point).dot(c.axis)).len() - c.radius).abs();
+                dist(&a.1).total_cmp(&dist(&b.1))
+            })
+    };
+    let (body, cyl) = nearest(true).or_else(|| nearest(false)).ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
     let dia = cyl.radius * 2.0;
     let tapped_size = if tapped {
         let name = designation.ok_or_else(|| DocError::Invalid("a tapped hole needs a designation".into()))?;
@@ -6778,7 +6792,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     } else {
                         parallel_tapped_wall(st, p, dir, r).unwrap_or(p + dir.any_perp() * r + dir * (r * 0.5))
                     };
-                    let mut t = thread_on_impl(st, f.id, wall, Some(d), None, true, false)?;
+                    let mut t = thread_on_impl(st, f.id, Some(f.component), wall, Some(d), None, true, false)?;
                     if let Some(depth) = thread_depth {
                         let available = t.end - t.start;
                         if depth > available {
@@ -6806,7 +6820,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 Some(e) => Some(val(vals, e, Kind::Length)?),
                 None => None,
             };
-            let t = thread_on(st, f.id, face.0, designation.as_deref(), l, *modeled)?;
+            let t = thread_on(st, f.id, Some(f.component), face.0, designation.as_deref(), l, *modeled)?;
             if !*modeled {
                 st.threads.push(t);
                 return Ok(());

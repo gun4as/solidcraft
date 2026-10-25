@@ -26,7 +26,7 @@ Always shown, in order: MODEL, SURFACE, ASSEMBLE, INSERT, INSPECT, MANAGE, VIEW,
 | INSERT | FILES | **`file.insert_step`**, **`file.insert_mesh`**, **`component.insert_design`**, `file.save_mesh` |
 | INSERT | IMAGES | **`canvas.insert`**, **`canvas.decal`**, **`canvas.edit`** |
 | INSERT | 2D | **`sketch.insert_dxf`**, **`sketch.insert_svg`** |
-| INSERT | LIBRARY | **`parts.fastener`**, **`parts.library`**, **`parts.resize`**, `parts.insert` |
+| INSERT | LIBRARY | **`parts.fastener`**, **`parts.gear`**, **`parts.library`**, `parts.resize`, `parts.insert` |
 | INSERT | LINKS | **`component.update_links`**, **`component.break_link`** |
 | INSPECT | MEASURE | **`inspect.measure`**, **`inspect.center_of_mass`**, **`component.properties`** |
 | INSPECT | SECTION | **`inspect.section`** |
@@ -96,7 +96,7 @@ Explicit command-id lists override the default placement mapping. Shared command
 | SOLID / CREATE | MODEL / CREATE | `solid.extrude`, `solid.revolve`, `solid.sweep`, `solid.loft`, `solid.box`, `solid.cylinder`, `solid.sphere`, `solid.torus`, `solid.hole`, `solid.pipe`, `solid.bounding_solid`, `solid.thread`, `solid.boundary_fill`, `solid.coil`, `solid.rib`, `solid.web`, `solid.emboss`, `frame.member` |
 | SOLID / CREATE | MODEL / SKETCH | `sketch.create` |
 | SOLID / INSERT | INSERT / FILES | `file.insert_step`, `file.insert_mesh` |
-| SOLID / INSERT | INSERT / LIBRARY | `parts.fastener` |
+| SOLID / INSERT | INSERT / LIBRARY | `parts.fastener`, `parts.gear` |
 | SOLID / INSPECT | INSPECT / CHECK | `inspect.interference` |
 | SOLID / INSPECT | INSPECT / MEASURE | `inspect.measure` |
 | SOLID / INSPECT | INSPECT / SECTION | `inspect.section` |

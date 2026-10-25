@@ -2464,6 +2464,23 @@ pub struct StandardPart {
     pub size: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub length: Option<f64>,
+    /// A gear's or pulley's bore when it was chosen (mm); none: the size's default bore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bore: Option<f64>,
+    /// A helical or herringbone gear's helix angle when it was chosen (radians, negative: left
+    /// hand); none: the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helix: Option<f64>,
+    /// A worm wheel's worm starts when they were chosen; none: one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts: Option<u32>,
+    /// A screw's drive when it was chosen (`hex`, `hexalobular`, `cross`, `slot`); none: its
+    /// family's first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive: Option<String>,
+    /// The thread is modelled (cut into the part) rather than cosmetic.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub modeled_thread: bool,
 }
 
 /// A component whose contents come from another design file (Insert Design): where that file

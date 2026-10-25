@@ -513,3 +513,27 @@ fn fillet_beside_a_modelled_thread_finishes() {
     let volume_after = volume(&mut s, "Screw");
     assert!(volume_after < volume_before && volume_after > volume_before * 0.99, "{volume_before} -> {volume_after}");
 }
+
+/// A modelled thread cuts its own component's body, not another component's part at the same
+/// point: two parts inserted side by side are each modelled at their component's origin.
+#[test]
+fn a_modelled_thread_cuts_its_own_components_body() {
+    let pin = json!({"family": "dowel_pin", "size": "6", "length": 20, "point": [0, 0, 0], "direction": [0, 0, 1]});
+    let faces = |s: &Session, name: &str| -> usize {
+        let st = s.world_state();
+        let comp = s.doc.components.iter().find(|c| c.name.starts_with(name)).map_or(0, |c| c.id);
+        st.bodies.iter().filter(|b| s.doc.model_body_component(b) == comp).map(|b| b.body.face_count()).sum()
+    };
+    let mut alone = Session::default();
+    run(&mut alone, "parts.insert", pin.clone());
+    let mut s = Session::default();
+    run(&mut s, "parts.insert", pin);
+    run(
+        &mut s,
+        "parts.insert",
+        json!({"family": "set_screw", "size": "M6", "length": 20, "thread": "modeled", "point": [20, 0, 0], "direction": [0, 0, 1]}),
+    );
+    // The pin keeps its faces; the set screw has the thread's many.
+    assert_eq!(faces(&s, "Dowel Pin"), faces(&alone, "Dowel Pin"));
+    assert!(faces(&s, "Set Screw") > 100, "{}", faces(&s, "Set Screw"));
+}

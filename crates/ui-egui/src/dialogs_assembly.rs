@@ -62,7 +62,7 @@ const TYPE_LABELS: [&str; 13] = [
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
-const MOVES: [&str; 12] = [
+const MOVES: [&str; 13] = [
     "joint.create",
     "joint.as_built",
     "joint.drive",
@@ -75,6 +75,7 @@ const MOVES: [&str; 12] = [
     "joint.cam",
     "parts.insert",
     "parts.fastener",
+    "parts.gear",
 ];
 
 #[derive(Clone, Debug)]

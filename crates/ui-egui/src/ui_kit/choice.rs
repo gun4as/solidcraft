@@ -308,6 +308,47 @@ pub(crate) fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) ->
     response
 }
 
+/// Size of a `picture_tile` (three to a dialog's width): the picture with a line of name under it.
+const TILE: egui::Vec2 = egui::vec2(74.0, 62.0);
+
+/// A picture with its name under it, picked like a list item (a library category). Without a
+/// picture yet the name stands alone. Tokens: space_2, space_4, radius_sm, form_primary,
+/// control_fill, hover, border, font_small, text.
+pub(crate) fn picture_tile(ui: &mut Ui, key: &str, picture: Option<&egui::TextureHandle>, label: &str, selected: bool) -> egui::Response {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(TILE, egui::Sense::click());
+    let fill = if response.hovered() { t.hover } else { t.control_fill };
+    ui.painter().rect_filled(rect, t.radius_sm, fill);
+    let stroke = if selected { egui::Stroke::new(t.space_2, t.form_primary) } else { t.control_border_stroke(t.border) };
+    ui.painter().rect_stroke(rect, t.radius_sm, stroke, egui::StrokeKind::Inside);
+    let inner = rect.shrink(t.space_4);
+    let text_h = t.font_small + t.space_4;
+    let pic = egui::Rect::from_min_max(inner.min, egui::pos2(inner.max.x, inner.max.y - text_h));
+    if let Some(tex) = picture {
+        egui::Image::new(tex).fit_to_exact_size(pic.size()).corner_radius(t.radius_sm).paint_at(ui, pic);
+    }
+    let text_rect = egui::Rect::from_min_max(egui::pos2(inner.min.x, inner.max.y - text_h), inner.max);
+    ui.put(text_rect, egui::Label::new(egui::RichText::new(label).size(t.font_small).color(t.text)).truncate().selectable(false));
+    crate::scenario::publish_target(&format!("dialog:tile:{key}"), rect);
+    response.on_hover_text(label)
+}
+
+/// `picture_tile`s in rows filling the width.
+pub(crate) fn tile_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
+    let t = Tokens::get();
+    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (TILE.x + t.space_4)).floor().clamp(1.0, 16.0) as usize;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = vec2(t.space_4, t.space_4);
+        for row in values.chunks(columns.max(1)) {
+            ui.horizontal(|ui| {
+                for value in row {
+                    each(ui, value);
+                }
+            });
+        }
+    });
+}
+
 /// A reusable draggable document-colour sample; caller supplies the existing domain payload.
 /// Tokens: control_height/radius, border, accent, hover.
 pub(crate) fn color_swatch<T: Send + Sync + 'static>(
