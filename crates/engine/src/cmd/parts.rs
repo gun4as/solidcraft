@@ -360,6 +360,11 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     if !(b.is_finite() && b > 0.5 && b / 2.0 <= root - 1.0) {
         return Err(format!("bore {b} mm does not fit: at most {:.1} mm for this size", 2.0 * (root - 1.0)));
     }
+    if let Shape::Gear { offset: Some((o, d)), .. } = sh
+        && b / 2.0 + 0.5 > o - d / 2.0
+    {
+        return Err(format!("bore {b} mm runs into the offset hole: at most {:.1} mm", 2.0 * (o - d / 2.0 - 0.5)));
+    }
     Ok(match sh {
         Shape::Gear { tooth, z, w, helix, herringbone, round, offset, .. } => Shape::Gear { tooth, z, w, bore: b, helix, herringbone, round, offset },
         Shape::Worm { m, d1, starts, len, .. } => Shape::Worm { m, d1, starts, len, bore: b },
@@ -1178,14 +1183,16 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
                 return Err(format!("the helix angle must be {}…{} deg (negative: left hand)", HELIX_RANGE.0, HELIX_RANGE.1));
             }
             let (tooth, round, offset) = tooth_options(kind, m, helix, &extra)?;
-            let bore = bore_for(tooth.root_radius(z));
+            let mut bore = bore_for(tooth.root_radius(z));
             if let Some((o, d)) = offset {
-                // Inside the web: clear of the bore and of the tooth roots by half a millimetre.
-                if !(o > 0.0 && d > 0.5 && o - d / 2.0 >= bore / 2.0 + 0.5 && o + d / 2.0 <= tooth.root_radius(z) - 0.5) {
-                    return Err(format!(
-                        "an offset hole must sit between the bore (Ø{bore}) and the tooth roots (Ø{:.1})",
-                        2.0 * tooth.root_radius(z)
-                    ));
+                // Inside the web, half a millimetre clear of the tooth roots; the default bore
+                // shrinks to leave it room (a chosen one is checked by `with_bore`).
+                if !(o > 0.0 && d > 0.5 && o - d / 2.0 >= 1.5 && o + d / 2.0 <= tooth.root_radius(z) - 0.5) {
+                    return Err(format!("an offset hole must sit inside the tooth roots (Ø{:.1}) and clear of the axis", 2.0 * tooth.root_radius(z)));
+                }
+                bore = BORES.iter().copied().rev().find(|b| *b <= bore && b / 2.0 + 0.5 <= o - d / 2.0).unwrap_or(0.0);
+                if bore <= 0.0 {
+                    return Err("an offset hole this close to the axis leaves no room for a bore".into());
                 }
             }
             Shape::Gear { tooth, z, w, bore, helix, herringbone: kind == GearKind::Herringbone, round, offset }
@@ -1886,6 +1893,9 @@ fn swept_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z
         json!({"sketch": sketch, "profiles": profiles(circles, material), "path_sketch": path, "path": ["axis"],
                "twist": format!("{} deg", twist.to_degrees()), "scale": scale, "operation": op}),
     )?;
+    // A sweep leaves its sketches shown (an extrude hides its own): they are the part's insides.
+    let items: Vec<String> = [&sketch, &path].iter().filter_map(|v| v.as_u64()).map(|id| id.to_string()).collect();
+    run(s, "browser.visibility", json!({"visible": false, "items": items}))?;
     Ok(())
 }
 
