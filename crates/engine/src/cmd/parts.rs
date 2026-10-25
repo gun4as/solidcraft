@@ -1087,7 +1087,7 @@ impl BevelTooth {
             let rho = rv + off(r);
             (std::f64::consts::PI / (2.0 * zv) + inv(pa) - inv((rbv / rho).min(1.0).acos())) / c
         };
-        toothed_outline(z, self.root_radius(z), self.tip_radius(z), self.radius(z, rbv - rv), &psi, Flanks::Arcs, Rounding::default())
+        toothed_outline(z, self.root_radius(z), self.tip_radius(z), self.radius(z, rbv - rv), &psi, Flanks::Lines, Rounding::default())
             .map_err(|e| format!("{z} bevel teeth of module {}: {e}", self.m))
     }
 }
@@ -1565,6 +1565,9 @@ fn worm_outline(m: f64, d1: f64, starts: u32) -> std::result::Result<Vec<Seg>, S
 enum Flanks {
     Spline,
     Arcs,
+    /// Four chords: swept towards a bevel gear's apex they are planes, which the cut along its
+    /// back cone takes far quicker than curved walls (they lie a hair inside the involute).
+    Lines,
 }
 
 /// The arc from `a` through `m` to `b` (a line when they are in line).
@@ -1587,6 +1590,9 @@ fn flank(pts: &[[f64; 2]], how: Flanks) -> Vec<Seg> {
     let n = pts.len().saturating_sub(1);
     match (how, pts.first(), pts.get(n / 4), pts.get(n / 2), pts.get(3 * n / 4), pts.last()) {
         (Flanks::Arcs, Some(a), Some(q1), Some(m), Some(q3), Some(b)) if n >= 4 => vec![arc3(*a, *q1, *m), arc3(*m, *q3, *b)],
+        (Flanks::Lines, Some(a), Some(q1), Some(m), Some(q3), Some(b)) if n >= 4 => {
+            vec![Seg::Line(*a, *q1), Seg::Line(*q1, *m), Seg::Line(*m, *q3), Seg::Line(*q3, *b)]
+        }
         _ => vec![Seg::Spline(pts.to_vec())],
     }
 }
@@ -2042,10 +2048,13 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
             let square = |t: f64| (rp + t * lean_c, t * lean_s);
             let ((rb, zb), (rt, zt)) = (square(-1.5 * m), square(1.5 * m));
             let ra = tooth.tip_radius(z) * (a - z0) / a + 1.0;
-            revolve(s, &[(rb, zb), (rt, zt), (ra, zt), (ra, z0 - 1.0), (rb, z0 - 1.0)], "cut")?;
-            cyl(s, bevel_hub(tooth, z, cone, b), z0 - b, z0, "join")?;
-            // The bore through both (the teeth shrink, so it is cut, not drawn in the outline).
+            // The hub and the bore before the cut: on the plain sweep they are quick, on the cut
+            // teeth slow. (The bore is cut, not drawn in the outline, as the teeth shrink.)
+            // Up into the teeth's solid middle, not just to their bottom face: a join on one plane is
+            // slow.
+            cyl(s, bevel_hub(tooth, z, cone, b), z0 - b, z0 + 0.5 * (h - z0), "join")?;
             cyl(s, bore, z0 - b - 1.0, h + 1.0, "cut")?;
+            revolve(s, &[(rb, zb), (rt, zt), (ra, zt), (ra, z0 - 1.0), (rb, z0 - 1.0)], "cut")?;
         }
         Shape::RingGear { space, z, w, od } => {
             let segs = gear_outline(space, z, Flanks::Spline, Rounding::default()).map_err(EngineError::Other)?;
