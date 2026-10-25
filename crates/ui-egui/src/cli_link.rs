@@ -45,6 +45,7 @@ pub fn plan(slot: &Slot, cli: &Path) -> Plan {
 /// The folders a link goes in, best first.
 pub const DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn slot(link: &Path) -> Slot {
     match std::fs::symlink_metadata(link) {
         Err(_) => Slot::Empty,
@@ -155,6 +156,7 @@ mod tests {
         assert_eq!(plan(&Slot::Other, cli), Plan::Skip);
     }
 
+    #[cfg(unix)]
     #[test]
     fn links_only_where_it_may() {
         let d = std::env::temp_dir().join(format!("solidcraft-cli-link-{}", std::process::id()));
