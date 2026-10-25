@@ -1,7 +1,7 @@
 //! Standard parts: ISO metric fasteners, dowel pins and ball bearings, generated in code from
 //! the dimensions in the public standards tables (no vendor geometry); involute gears on the
 //! ISO 53 basic rack (spur, helical, herringbone, internal ring gears, worm wheels), Archimedean
-//! worms, cycloidal reducer discs and timing-belt pulleys (GT2, HTD 3M/5M), generated from their
+//! worms and timing-belt pulleys (GT2, HTD 3M/5M), generated from their
 //! tooth geometry. Each part is inserted as
 //! its own component, built by ordinary features (so it stays parametric and editable), with a
 //! cosmetic thread where it has one; at a hole it gets a rigid joint that puts its axis on the
@@ -25,19 +25,19 @@ pub static COMMANDS: &[CommandSpec] = &[
         "the Insert Part dialog's command (same as parts.insert): family, size, length?, at?|point?+direction?, name?",
     ),
     CommandSpec::new("parts.gear", "Insert Gear / Pulley", insert).at("SOLID", "INSERT").icon("gear").params(
-        "the Insert Gear / Pulley dialog's command (same as parts.insert): family (spur_gear_m… | helical_gear_m… | herringbone_gear_m… | ring_gear_m… | worm_m… | worm_wheel_m… | cycloidal_disc_d… | pulley_…), size (teeth; a worm's starts; a cycloidal disc's lobes), length? (width), bore? (mm), helix_angle?, starts?, at?|point?+direction?, name?",
+        "the Insert Gear / Pulley dialog's command (same as parts.insert): family (spur_gear_m… | helical_gear_m… | herringbone_gear_m… | ring_gear_m… | worm_m… | worm_wheel_m… | pulley_…), size (teeth; a worm's starts), length? (width), bore? (mm), helix_angle?, starts?, at?|point?+direction?, name?",
     ),
     CommandSpec::new("parts.insert", "Insert Part", insert).icon("fastener").params(
-        "family (socket_head_cap_screw | hex_bolt | hex_nut | washer | set_screw | dowel_pin | bearing | spur_gear_m0_5 … spur_gear_m3 | helical_gear_m… | herringbone_gear_m… | ring_gear_m… | worm_m… | worm_wheel_m… (modules 0_5, 1, 1_5, 2, 3) | cycloidal_disc_d40 | _d60 | _d80 | _d100 | pulley_gt2 | pulley_htd3m | pulley_htd5m); \
-         size (\"M6\", \"608\" for bearings, the number of teeth for gears and pulleys: \"20\"; a worm's number of starts 1…4; a cycloidal disc's number of lobes); \
-         length? (mm; screws, bolts, set screws, pins; a gear's or disc's face width, a pulley's belt width, a worm's length; default a standard length near 2.5 d); \
-         bore?: mm (gears except ring gears, worms, discs and pulleys; default from the size); \
+        "family (socket_head_cap_screw | hex_bolt | hex_nut | washer | set_screw | dowel_pin | bearing | spur_gear_m0_5 … spur_gear_m3 | helical_gear_m… | herringbone_gear_m… | ring_gear_m… | worm_m… | worm_wheel_m… (modules 0_5, 1, 1_5, 2, 3) | pulley_gt2 | pulley_htd3m | pulley_htd5m); \
+         size (\"M6\", \"608\" for bearings, the number of teeth for gears and pulleys: \"20\"; a worm's number of starts 1…4); \
+         length? (mm; screws, bolts, set screws, pins; a gear's face width, a pulley's belt width, a worm's length; default a standard length near 2.5 d); \
+         bore?: mm (gears except ring gears, worms and pulleys; default from the size); \
          helix_angle?: angle (helical and herringbone gears, 5…45 deg, default 20 deg; negative: left hand); \
          starts?: 1…4 (a worm wheel: the starts of the worm it meshes with, default 1); \
          at?: [x,y,z] on a hole's rim or wall (the part seats on the hole's face with a rigid joint) | point?: [x,y,z] with direction?: [x,y,z] (no joint); name?",
     ),
     CommandSpec::new("parts.resize", "Change Part Size", resize_atomic).icon("scale")
-        .params("component: id|name of an inserted part; size?; length?; bore? (gears, worms, discs, pulleys); helix_angle?; starts? — rebuilds it (joints keep it seated)"),
+        .params("component: id|name of an inserted part; size?; length?; bore? (gears, worms, pulleys); helix_angle?; starts? — rebuilds it (joints keep it seated)"),
 ];
 
 /// A family: (id, name, standard).
@@ -90,10 +90,6 @@ const FAMILIES: &[(&str, &str, &str)] = &[
     ("worm_wheel_m1_5", "Worm wheel, module 1.5", "helical teeth, not throated"),
     ("worm_wheel_m2", "Worm wheel, module 2", "helical teeth, not throated"),
     ("worm_wheel_m3", "Worm wheel, module 3", "helical teeth, not throated"),
-    ("cycloidal_disc_d40", "Cycloidal disc, pin circle Ø40", "lobes + 1 pins"),
-    ("cycloidal_disc_d60", "Cycloidal disc, pin circle Ø60", "lobes + 1 pins"),
-    ("cycloidal_disc_d80", "Cycloidal disc, pin circle Ø80", "lobes + 1 pins"),
-    ("cycloidal_disc_d100", "Cycloidal disc, pin circle Ø100", "lobes + 1 pins"),
     ("pulley_gt2", "GT2 timing pulley", "2 mm pitch (approximate groove)"),
     ("pulley_htd3m", "HTD 3M timing pulley", "3 mm pitch (approximate groove)"),
     ("pulley_htd5m", "HTD 5M timing pulley", "5 mm pitch (approximate groove)"),
@@ -159,47 +155,6 @@ fn lead_angle(m: f64, starts: u32) -> f64 {
     (f64::from(starts) * m / worm_d1(m)).atan()
 }
 
-/// Cycloidal discs: (family, pin circle diameter); the lobes the library lists, and disc widths.
-const CYCLOIDS: [(&str, f64); 4] =
-    [("cycloidal_disc_d40", 40.0), ("cycloidal_disc_d60", 60.0), ("cycloidal_disc_d80", 80.0), ("cycloidal_disc_d100", 100.0)];
-const CYCLOID_LOBES: [u32; 8] = [8, 10, 12, 15, 20, 25, 30, 40];
-const DISC_WIDTHS: [f64; 8] = [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0];
-
-/// A cycloidal disc's eccentricity for pin circle radius `r` and `n` lobes: half the most it may
-/// have before the pins' path gets cusps (e·(n + 1) < r).
-fn cycloid_e(r: f64, n: u32) -> f64 {
-    0.5 * r / f64::from(n + 1)
-}
-
-/// The pins' path seen from a cycloidal disc and its first two derivatives at `u`:
-/// q(u) = r·(cos u, sin u) − e·(cos ku, sin ku), k = n + 1.
-fn trochoid(r: f64, n: u32, e: f64, u: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
-    let k = f64::from(n + 1);
-    let (s, c, sk, ck) = (u.sin(), u.cos(), (k * u).sin(), (k * u).cos());
-    ([r * c - e * ck, r * s - e * sk], [-r * s + e * k * sk, r * c - e * k * ck], [-r * c + e * k * k * ck, -r * s + e * k * k * sk])
-}
-
-/// The smallest radius of curvature where the pins' path bends towards the disc's centre: a pin
-/// at least this big would cut the lobes' tips (undercut).
-fn cycloid_rho_min(r: f64, n: u32, e: f64) -> f64 {
-    const SAMPLES: u32 = 4096;
-    (0..SAMPLES)
-        .map(|i| {
-            let (_, d, dd) = trochoid(r, n, e, 2.0 * std::f64::consts::PI * f64::from(i) / f64::from(SAMPLES));
-            let cross = d[0] * dd[1] - d[1] * dd[0];
-            if cross > 0.0 { (d[0] * d[0] + d[1] * d[1]).powf(1.5) / cross } else { f64::INFINITY }
-        })
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// A cycloidal disc's pin diameter: the largest ISO 8734 dowel that takes at most half of the
-/// space between neighbouring pins and stays clear of undercut.
-fn cycloid_pin(r: f64, n: u32) -> Option<f64> {
-    let half_gap = r * (std::f64::consts::PI / f64::from(n + 1)).sin();
-    let limit = (0.8 * cycloid_rho_min(r, n, cycloid_e(r, n))).min(0.5 * half_gap);
-    DOWEL.iter().copied().rev().find(|d| d / 2.0 <= limit)
-}
-
 /// Timing pulleys: (id, pitch p, pitch line differential, groove depth, groove radius, flange
 /// thickness, belt widths). The pulley's outside diameter is z·p/π − 2·PLD (GT2 20T: 12.22).
 /// The groove is one circular arc of the given depth and radius, an approximation of the
@@ -223,7 +178,7 @@ fn bore_for(root_radius: f64) -> f64 {
 
 /// The library's categories, as the dialogs show them: (id, name, group, and a part that
 /// pictures the category: family, size, length).
-const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 13] = [
+const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 12] = [
     ("screws", "Screws", "fasteners", "socket_head_cap_screw", "M6", 16.0),
     ("set_screws", "Set screws", "fasteners", "set_screw_dog", "M8", 10.0),
     ("nuts", "Nuts", "fasteners", "hex_nut", "M8", 0.0),
@@ -235,7 +190,6 @@ const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 13] = [
     ("herringbone_gears", "Herringbone", "gears_pulleys", "herringbone_gear_m1", "14", 8.0),
     ("ring_gears", "Internal", "gears_pulleys", "ring_gear_m1", "40", 6.0),
     ("worm_drives", "Worm", "gears_pulleys", "worm_m1", "1", 10.0),
-    ("cycloidal_discs", "Cycloidal", "gears_pulleys", "cycloidal_disc_d40", "10", 5.0),
     ("timing_pulleys", "Pulleys", "gears_pulleys", "pulley_gt2", "20", 6.0),
 ];
 
@@ -249,7 +203,6 @@ fn category(family: &str) -> &'static str {
         "dowel_pin" => "pins",
         "bearing" => "bearings",
         f if f.starts_with("pulley_") => "timing_pulleys",
-        f if f.starts_with("cycloidal_disc_") => "cycloidal_discs",
         f => match gear_family(f).map(|g| g.0) {
             Some(GearKind::Spur) => "spur_gears",
             Some(GearKind::Helical) => "helical_gears",
@@ -263,14 +216,15 @@ fn category(family: &str) -> &'static str {
 
 /// Gears, discs and pulleys (the Insert Gear / Pulley dialog), as against fasteners.
 fn is_drive(family: &str) -> bool {
-    gear_family(family).is_some() || family.starts_with("pulley_") || family.starts_with("cycloidal_disc_")
+    gear_family(family).is_some() || family.starts_with("pulley_")
 }
 
 /// The options a family takes besides size and length (the dialog shows a field for each).
 fn options(family: &str) -> Vec<&'static str> {
     match gear_family(family).map(|g| g.0) {
         Some(GearKind::Ring) => vec![],
-        Some(GearKind::Helical | GearKind::Herringbone) => vec!["bore", "helix_angle"],
+        Some(GearKind::Spur) => vec!["bore", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet", "offset_hole"],
+        Some(GearKind::Helical | GearKind::Herringbone) => vec!["bore", "helix_angle", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet"],
         Some(GearKind::WormWheel) => vec!["bore", "starts"],
         Some(_) => vec!["bore"],
         None if is_drive(family) => vec!["bore"],
@@ -294,18 +248,16 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     let root = match &sh {
         Shape::Gear { tooth, z, .. } => tooth.root_radius(*z),
         Shape::Worm { m, d1, .. } => d1 / 2.0 - 1.25 * m,
-        Shape::Cycloid { r, e, rr, .. } => r - e - rr,
         Shape::Pulley { p, pld, depth, z, .. } => f64::from(*z) * p / std::f64::consts::PI / 2.0 - pld - depth,
         Shape::RingGear { .. } => return Err("a ring gear has no bore".into()),
-        _ => return Err("only gears, worms, cycloidal discs and pulleys take a bore".into()),
+        _ => return Err("only gears, worms and pulleys take a bore".into()),
     };
     if !(b.is_finite() && b > 0.5 && b / 2.0 <= root - 1.0) {
         return Err(format!("bore {b} mm does not fit: at most {:.1} mm for this size", 2.0 * (root - 1.0)));
     }
     Ok(match sh {
-        Shape::Gear { tooth, z, w, helix, herringbone, .. } => Shape::Gear { tooth, z, w, bore: b, helix, herringbone },
+        Shape::Gear { tooth, z, w, helix, herringbone, round, offset, .. } => Shape::Gear { tooth, z, w, bore: b, helix, herringbone, round, offset },
         Shape::Worm { m, d1, starts, len, .. } => Shape::Worm { m, d1, starts, len, bore: b },
-        Shape::Cycloid { r, n, e, rr, w, .. } => Shape::Cycloid { r, n, e, rr, w, bore: b },
         Shape::Pulley { p, pld, depth, rg, z, w, flange, .. } => Shape::Pulley { p, pld, depth, rg, z, w, flange, bore: b },
         other => other,
     })
@@ -328,7 +280,20 @@ struct Extra {
     drive: Option<String>,
     /// The thread modelled (cut into the part) rather than cosmetic.
     modeled: bool,
+    /// A gear's tooth: its normal pressure angle (radians; none: 20°), profile shift coefficient
+    /// x, circular backlash (mm), and root and tip fillet radii (mm).
+    pressure_angle: Option<f64>,
+    profile_shift: Option<f64>,
+    backlash: Option<f64>,
+    root_fillet: Option<f64>,
+    tip_fillet: Option<f64>,
+    /// A spur gear's second hole: (distance of its centre from the axis, diameter), mm.
+    offset_hole: Option<[f64; 2]>,
 }
+
+/// The gear tooth options' ranges.
+const PRESSURE_ANGLES: (f64, f64) = (14.5, 30.0);
+const PROFILE_SHIFTS: (f64, f64) = (-1.0, 1.0);
 
 /// `helix_angle` (a number in degrees or an angle expression) and `starts` (1…4).
 fn extra_params(s: &Session, p: &Value, cmd: &str) -> Result<Extra> {
@@ -363,7 +328,81 @@ fn extra_params(s: &Session, p: &Value, cmd: &str) -> Result<Extra> {
             _ => return Err(bad(cmd, "`thread` must be cosmetic or modeled")),
         },
     };
-    Ok(Extra { helix, starts, drive, modeled })
+    let number = |k: &str| -> Result<Option<f64>> {
+        match p.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(_) => num(p, k).filter(|v| v.is_finite()).map(Some).ok_or_else(|| bad(cmd, format!("`{k}` must be a number"))),
+        }
+    };
+    let pressure_angle = match p.get("pressure_angle") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let e = crate::params::expr(p, "pressure_angle").ok_or_else(|| bad(cmd, "`pressure_angle` must be an angle"))?;
+            Some(s.doc.eval(&e, solidcraft_doc::expr::Kind::Angle).map_err(|e| bad(cmd, format!("pressure_angle: {e}")))?)
+        }
+    };
+    let offset_hole = match p.get("offset_hole") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let pair = match v {
+                Value::Array(a) => (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)),
+                Value::Object(_) => (v.get("offset").and_then(Value::as_f64), v.get("diameter").and_then(Value::as_f64)),
+                _ => (None, None),
+            };
+            match pair {
+                (Some(o), Some(d)) if o.is_finite() && d.is_finite() => Some([o, d]),
+                _ => return Err(bad(cmd, "`offset_hole` must be [offset, diameter] in mm")),
+            }
+        }
+    };
+    Ok(Extra {
+        helix,
+        starts,
+        drive,
+        modeled,
+        pressure_angle,
+        profile_shift: number("profile_shift")?,
+        backlash: number("backlash")?,
+        root_fillet: number("root_fillet")?,
+        tip_fillet: number("tip_fillet")?,
+        offset_hole,
+    })
+}
+
+/// A gear's tooth options checked and applied: the rack, the roundings and the offset hole.
+fn tooth_options(kind: GearKind, m: f64, helix: f64, extra: &Extra) -> std::result::Result<(Involute, Rounding, Option<(f64, f64)>), String> {
+    let shaped = matches!(kind, GearKind::Spur | GearKind::Helical | GearKind::Herringbone);
+    let given = extra.pressure_angle.is_some()
+        || extra.profile_shift.is_some()
+        || extra.backlash.is_some()
+        || extra.root_fillet.is_some()
+        || extra.tip_fillet.is_some()
+        || extra.offset_hole.is_some();
+    if given && !shaped {
+        return Err("only spur, helical and herringbone gears take a pressure angle, profile shift, backlash, fillets or an offset hole".into());
+    }
+    let an = extra.pressure_angle.unwrap_or(20f64.to_radians());
+    let deg = an.to_degrees();
+    if !(deg >= PRESSURE_ANGLES.0 - 1e-9 && deg <= PRESSURE_ANGLES.1 + 1e-9) {
+        return Err(format!("the pressure angle must be {}…{} deg", PRESSURE_ANGLES.0, PRESSURE_ANGLES.1));
+    }
+    let x = extra.profile_shift.unwrap_or(0.0);
+    if !(PROFILE_SHIFTS.0..=PROFILE_SHIFTS.1).contains(&x) {
+        return Err(format!("the profile shift must be {}…{}", PROFILE_SHIFTS.0, PROFILE_SHIFTS.1));
+    }
+    let backlash = extra.backlash.unwrap_or(0.0);
+    if !(0.0..=0.5 * m).contains(&backlash) {
+        return Err(format!("the backlash must be 0…{:.2} mm (half a module)", 0.5 * m));
+    }
+    let round = Rounding { root: extra.root_fillet.unwrap_or(0.0), tip: extra.tip_fillet.unwrap_or(0.0) };
+    if !(0.0..=0.5 * m).contains(&round.root) || !(0.0..=0.5 * m).contains(&round.tip) {
+        return Err(format!("a fillet must be 0…{:.2} mm (half a module)", 0.5 * m));
+    }
+    if extra.offset_hole.is_some() && helix != 0.0 {
+        return Err("not supported yet: an offset hole on a helical or herringbone gear".into());
+    }
+    let tooth = Involute { shift: x * m, backlash, ..Involute::rack(m, helix, an) };
+    Ok((tooth, round, extra.offset_hole.map(|[o, d]| (o, d))))
 }
 
 /// "20", "z20", "20T" -> 20 (6…200 teeth).
@@ -751,17 +790,16 @@ enum Shape {
     Rod { d: f64, pitch: Option<f64>, len: f64, socket: Option<(f64, f64)>, point: Point, modeled: bool },
     /// An involute gear, `z` teeth of the transverse tooth system `tooth`, z 0…w, with a bore;
     /// `helix` its helix angle at the pitch circle (0: spur, positive: right hand), and a
-    /// herringbone turns that way up to half its width and back the other way above.
-    Gear { tooth: Involute, z: u32, w: f64, bore: f64, helix: f64, herringbone: bool },
+    /// herringbone turns that way up to half its width and back the other way above; `round` its
+    /// teeth's root and tip fillets, `offset` a second hole (its centre's distance from the axis
+    /// on −x, its diameter).
+    Gear { tooth: Involute, z: u32, w: f64, bore: f64, helix: f64, herringbone: bool, round: Rounding, offset: Option<(f64, f64)> },
     /// An internal ring gear: `z` teeth pointing in, cut from a cylinder of outside diameter
     /// `od` by the outline of their spaces (`space`: addendum and dedendum swapped), z 0…w.
     RingGear { space: Involute, z: u32, w: f64, od: f64 },
     /// A right-hand Archimedean worm: axial module `m`, pitch diameter `d1`, `starts` thread
     /// starts with straight 20° flanks in its axial section, z 0…len, with a bore.
     Worm { m: f64, d1: f64, starts: u32, len: f64, bore: f64 },
-    /// A cycloidal reducer disc: `n` lobes rolling on n + 1 pins of radius `rr` on a circle of
-    /// radius `r` with eccentricity `e`, z 0…w, with a bore for its eccentric bearing.
-    Cycloid { r: f64, n: u32, e: f64, rr: f64, w: f64, bore: f64 },
     /// A timing pulley: `z` grooves (one arc of radius `rg`, `depth` deep) on the outside
     /// diameter, for a belt `w` wide: teeth `BELT_CLEARANCE` wider than the belt between two
     /// flanges `flange` thick, z 0…w + BELT_CLEARANCE + 2·flange.
@@ -843,14 +881,27 @@ struct Involute {
     alpha: f64,
     ha: f64,
     hf: f64,
+    /// The profile shift (x·m, mm, in the normal plane): the tip and root circles move out by it
+    /// and the tooth thickens by 2·x·m·tan α_n at the pitch circle.
+    shift: f64,
+    /// tan of the normal pressure angle.
+    tan_an: f64,
+    /// The circular backlash this gear's teeth leave (mm at the pitch circle): each tooth is
+    /// thinner by half of it, its mate taking the other half.
+    backlash: f64,
 }
 
 impl Involute {
     /// The ISO 53 basic rack (20°, addendum m, dedendum 1.25 m) of module `m` in the normal
     /// plane of teeth at helix angle `helix` (0: spur).
     fn iso53(m: f64, helix: f64) -> Self {
+        Self::rack(m, helix, 20f64.to_radians())
+    }
+
+    /// A basic rack of normal pressure angle `an` (addendum m, dedendum 1.25 m).
+    fn rack(m: f64, helix: f64, an: f64) -> Self {
         let c = helix.cos();
-        Involute { mt: m / c, alpha: (20f64.to_radians().tan() / c).atan(), ha: m, hf: 1.25 * m }
+        Involute { mt: m / c, alpha: (an.tan() / c).atan(), ha: m, hf: 1.25 * m, shift: 0.0, tan_an: an.tan(), backlash: 0.0 }
     }
 
     fn pitch_radius(&self, z: u32) -> f64 {
@@ -858,11 +909,17 @@ impl Involute {
     }
 
     fn tip_radius(&self, z: u32) -> f64 {
-        self.pitch_radius(z) + self.ha
+        self.pitch_radius(z) + self.ha + self.shift
     }
 
     fn root_radius(&self, z: u32) -> f64 {
-        self.pitch_radius(z) - self.hf
+        self.pitch_radius(z) - self.hf + self.shift
+    }
+
+    /// Half a tooth's angle at the pitch circle.
+    fn half_tooth(&self, z: u32) -> f64 {
+        let zf = f64::from(z);
+        (std::f64::consts::FRAC_PI_2 + 2.0 * self.shift / self.ha.max(1e-12) * self.tan_an) / zf - self.backlash / (4.0 * self.pitch_radius(z))
     }
 }
 
@@ -900,6 +957,7 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
     let w = length.unwrap_or_else(|| gear_width(m));
     Ok(match kind {
         GearKind::Ring => {
+            tooth_options(kind, m, 0.0, &extra)?;
             if z < 20 {
                 return Err("a ring gear needs at least 20 teeth".into());
             }
@@ -909,12 +967,22 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
             Shape::RingGear { space, z, w, od }
         }
         GearKind::WormWheel => {
+            tooth_options(kind, m, 0.0, &extra)?;
             // Its transverse section is the worm's axial section: module m, 20°, helical at the
             // worm's lead angle, the same hand.
             let starts = extra.starts.unwrap_or(1);
             let tooth = Involute::iso53(m, 0.0);
             let w = length.unwrap_or_else(|| GEAR_WIDTHS.iter().copied().find(|w| *w >= 0.75 * worm_d1(m)).unwrap_or(30.0));
-            Shape::Gear { tooth, z, w, bore: bore_for(tooth.root_radius(z)), helix: lead_angle(m, starts), herringbone: false }
+            Shape::Gear {
+                tooth,
+                z,
+                w,
+                bore: bore_for(tooth.root_radius(z)),
+                helix: lead_angle(m, starts),
+                herringbone: false,
+                round: Rounding::default(),
+                offset: None,
+            }
         }
         _ => {
             let helix = if helical { extra.helix.unwrap_or(HELIX_DEFAULT.to_radians()) } else { 0.0 };
@@ -922,19 +990,20 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
             if helical && !(deg >= HELIX_RANGE.0 - 1e-9 && deg <= HELIX_RANGE.1 + 1e-9) {
                 return Err(format!("the helix angle must be {}…{} deg (negative: left hand)", HELIX_RANGE.0, HELIX_RANGE.1));
             }
-            let tooth = Involute::iso53(m, helix);
-            Shape::Gear { tooth, z, w, bore: bore_for(tooth.root_radius(z)), helix, herringbone: kind == GearKind::Herringbone }
+            let (tooth, round, offset) = tooth_options(kind, m, helix, &extra)?;
+            let bore = bore_for(tooth.root_radius(z));
+            if let Some((o, d)) = offset {
+                // Inside the web: clear of the bore and of the tooth roots by half a millimetre.
+                if !(o > 0.0 && d > 0.5 && o - d / 2.0 >= bore / 2.0 + 0.5 && o + d / 2.0 <= tooth.root_radius(z) - 0.5) {
+                    return Err(format!(
+                        "an offset hole must sit between the bore (Ø{bore}) and the tooth roots (Ø{:.1})",
+                        2.0 * tooth.root_radius(z)
+                    ));
+                }
+            }
+            Shape::Gear { tooth, z, w, bore, helix, herringbone: kind == GearKind::Herringbone, round, offset }
         }
     })
-}
-
-/// A cycloidal disc family's shape: `size` the number of lobes.
-fn cycloid_shape(d: f64, size: &str, length: Option<f64>) -> std::result::Result<Shape, String> {
-    let n = size.trim().parse::<u32>().ok().filter(|n| (6..=60).contains(n)).ok_or_else(|| format!("no lobe count `{size}` (6…60)"))?;
-    let r = d / 2.0;
-    let rr = cycloid_pin(r, n).ok_or_else(|| format!("{n} lobes leave no room for pins on a Ø{d} pin circle"))? / 2.0;
-    let e = cycloid_e(r, n);
-    Ok(Shape::Cycloid { r, n, e, rr, w: length.unwrap_or(DISC_WIDTHS[3]), bore: bore_for(r - e - rr) })
 }
 
 /// A screw family's shape: its head from its standard's table, its drive (`extra.drive`, else
@@ -1027,6 +1096,15 @@ fn shape(family: &str, size: &str, length: Option<f64>, extra: Extra) -> std::re
     if extra.helix.is_some() || extra.starts.is_some() {
         return Err("only gears take a helix angle or starts".into());
     }
+    if extra.pressure_angle.is_some()
+        || extra.profile_shift.is_some()
+        || extra.backlash.is_some()
+        || extra.root_fillet.is_some()
+        || extra.tip_fillet.is_some()
+        || extra.offset_hole.is_some()
+    {
+        return Err("only gears take a pressure angle, profile shift, backlash, fillets or an offset hole".into());
+    }
     if extra.drive.is_some() && screw_drives(family).is_empty() {
         return Err("this part has no drive".into());
     }
@@ -1035,9 +1113,6 @@ fn shape(family: &str, size: &str, length: Option<f64>, extra: Extra) -> std::re
     }
     if !screw_drives(family).is_empty() {
         return screw_shape(family, size, length, &extra);
-    }
-    if let Some(&(_, d)) = CYCLOIDS.iter().find(|c| c.0 == family) {
-        return cycloid_shape(d, size, length);
     }
     Ok(match family {
         "hex_bolt" => {
@@ -1251,6 +1326,7 @@ fn cut_drive(s: &mut Session, drive: Drive, top: f64) -> Result<()> {
 }
 
 /// One piece of a closed outline in the XY sketch: `Arc` runs counter-clockwise start -> end.
+#[derive(Clone, Debug)]
 enum Seg {
     Line([f64; 2], [f64; 2]),
     Spline(Vec<[f64; 2]>),
@@ -1269,12 +1345,13 @@ fn inv(a: f64) -> f64 {
 /// root to the base circle (when the root is inside it), the involute flank as a fit spline, the
 /// tip arc, the other flank and the root arc to the next tooth. No undercut or root fillet is
 /// modelled.
-fn gear_outline(t: Involute, z: u32, flanks: Flanks) -> std::result::Result<Vec<Seg>, String> {
-    let zf = f64::from(z);
-    let (rp, rb) = (t.pitch_radius(z), t.pitch_radius(z) * t.alpha.cos());
-    // Half the tooth's angle at radius r (r ≥ rb): π/2z at the pitch circle, along the involute.
-    let psi = |r: f64| std::f64::consts::PI / (2.0 * zf) + inv(t.alpha) - inv((rb / r).min(1.0).acos());
-    toothed_outline(z, rp - t.hf, rp + t.ha, rb, &psi, flanks).map_err(|e| format!("{z} teeth of module {:.3}: {e}", t.mt))
+fn gear_outline(t: Involute, z: u32, flanks: Flanks, round: Rounding) -> std::result::Result<Vec<Seg>, String> {
+    let rb = t.pitch_radius(z) * t.alpha.cos();
+    // Half the tooth's angle at radius r (r ≥ rb): `half_tooth` at the pitch circle, along the
+    // involute.
+    let half = t.half_tooth(z);
+    let psi = |r: f64| half + inv(t.alpha) - inv((rb / r).min(1.0).acos());
+    toothed_outline(z, t.root_radius(z), t.tip_radius(z), rb, &psi, flanks, round).map_err(|e| format!("{z} teeth of module {:.3}: {e}", t.mt))
 }
 
 /// The transverse section of a right-hand Archimedean worm at z = 0: per start, flanks that are
@@ -1284,7 +1361,7 @@ fn worm_outline(m: f64, d1: f64, starts: u32) -> std::result::Result<Vec<Seg>, S
     let rp = d1 / 2.0;
     let lead = std::f64::consts::PI * m * f64::from(starts);
     let psi = |r: f64| std::f64::consts::PI * (std::f64::consts::PI * m / 2.0 - 2.0 * (r - rp) * 20f64.to_radians().tan()) / lead;
-    toothed_outline(starts, rp - 1.25 * m, rp + m, 0.0, &psi, Flanks::Arcs).map_err(|e| format!("a {starts}-start worm of module {m}: {e}"))
+    toothed_outline(starts, rp - 1.25 * m, rp + m, 0.0, &psi, Flanks::Arcs, Rounding::default()).map_err(|e| format!("a {starts}-start worm of module {m}: {e}"))
 }
 
 /// How a tooth's flank is drawn: a fit spline through its points, or two circular arcs through
@@ -1310,19 +1387,103 @@ fn arc3(a: [f64; 2], m: [f64; 2], b: [f64; 2]) -> Seg {
     if (m[0] - a[0]) * (b[1] - a[1]) - (m[1] - a[1]) * (b[0] - a[0]) > 0.0 { Seg::Arc { c, a, b } } else { Seg::Arc { c, a: b, b: a } }
 }
 
-/// A flank through `pts` (an odd number, at least 5) as `Flanks` says.
+/// A flank through `pts` (at least 5 for arcs; fewer make a spline) as `Flanks` says.
 fn flank(pts: &[[f64; 2]], how: Flanks) -> Vec<Seg> {
-    let n = pts.len() - 1;
+    let n = pts.len().saturating_sub(1);
     match (how, pts.first(), pts.get(n / 4), pts.get(n / 2), pts.get(3 * n / 4), pts.last()) {
-        (Flanks::Arcs, Some(a), Some(q1), Some(m), Some(q3), Some(b)) => vec![arc3(*a, *q1, *m), arc3(*m, *q3, *b)],
+        (Flanks::Arcs, Some(a), Some(q1), Some(m), Some(q3), Some(b)) if n >= 4 => vec![arc3(*a, *q1, *m), arc3(*m, *q3, *b)],
         _ => vec![Seg::Spline(pts.to_vec())],
     }
 }
 
+/// Corner roundings of a toothed outline: a fillet of radius `root` where each flank leaves the
+/// root circle and one of radius `tip` where it meets the tip circle (0: a sharp corner).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Rounding {
+    root: f64,
+    tip: f64,
+}
+
+/// A fillet of radius `r` in the corner at `a`, which is on the circle of radius `rc` about the
+/// origin, where the outline turns from that circle onto the straight piece from `a` towards
+/// `b`. It touches both: its centre `rc + r` from the origin (`outside` the circle) or `rc − r`
+/// (inside it), on the piece's side towards the angle `toward`. Returns the point on the circle,
+/// the point on the piece and the arc; none when it does not fit on the piece.
+fn corner_fillet(rc: f64, outside: bool, a: [f64; 2], b: [f64; 2], r: f64, toward: f64) -> Option<([f64; 2], [f64; 2], Seg)> {
+    let rcen = if outside { rc + r } else { rc - r };
+    let (ux, uy) = (b[0] - a[0], b[1] - a[1]);
+    let len = ux.hypot(uy);
+    if !(r > 0.0 && rcen > 0.0 && len > 1e-12) {
+        return None;
+    }
+    let u = [ux / len, uy / len];
+    let n = [-u[1], u[0]];
+    let side = {
+        let q = polar(rcen, toward);
+        (n[0] * (q[0] - a[0]) + n[1] * (q[1] - a[1])).signum()
+    };
+    let dist = |phi: f64| {
+        let c = polar(rcen, phi);
+        side * (n[0] * (c[0] - a[0]) + n[1] * (c[1] - a[1])) - r
+    };
+    let (mut lo, mut hi) = (a[1].atan2(a[0]), toward);
+    if dist(lo) > 0.0 || dist(hi) < 0.0 {
+        return None;
+    }
+    for _ in 0..80 {
+        let mid = 0.5 * (lo + hi);
+        if dist(mid) < 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let phi = 0.5 * (lo + hi);
+    let c = polar(rcen, phi);
+    let along = (c[0] - a[0]) * u[0] + (c[1] - a[1]) * u[1];
+    if !(0.0..=len).contains(&along) {
+        return None;
+    }
+    let on_circle = polar(rc, phi);
+    let on_piece = [a[0] + u[0] * along, a[1] + u[1] * along];
+    let (dx, dy) = (a[0] - c[0], a[1] - c[1]);
+    let d = dx.hypot(dy).max(1e-12);
+    let mid = [c[0] + r * dx / d, c[1] + r * dy / d];
+    Some((on_circle, on_piece, arc3(on_circle, mid, on_piece)))
+}
+
+/// A point turned by `a` about the origin.
+fn rot(p: [f64; 2], a: f64) -> [f64; 2] {
+    let (s, c) = a.sin_cos();
+    [c * p[0] - s * p[1], s * p[0] + c * p[1]]
+}
+
+/// The outline mirrored in the x axis.
+fn mirrored(segs: &[Seg]) -> Vec<Seg> {
+    let m = |p: &[f64; 2]| [p[0], -p[1]];
+    segs.iter()
+        .map(|g| match g {
+            Seg::Line(a, b) => Seg::Line(m(a), m(b)),
+            Seg::Spline(pts) => Seg::Spline(pts.iter().rev().map(m).collect()),
+            // A reflection turns the other way round.
+            Seg::Arc { c, a, b } => Seg::Arc { c: m(c), a: m(b), b: m(a) },
+        })
+        .collect()
+}
+
 /// A closed outline of `z` teeth from root radius `rf` to tip radius `ra`, tooth k centred at
 /// angle 2πk/z with half-angle `psi(r)` at radius r from `max(r_flank, rf)` out (a radial line
-/// below that).
-fn toothed_outline(z: u32, rf: f64, ra: f64, r_flank: f64, psi: &dyn Fn(f64) -> f64, flanks: Flanks) -> std::result::Result<Vec<Seg>, String> {
+/// below that), its corners rounded as `round` says. One tooth is drawn at angle 0, its rising
+/// side and the mirror of it, and turned to each tooth's place.
+fn toothed_outline(
+    z: u32,
+    rf: f64,
+    ra: f64,
+    r_flank: f64,
+    psi: &dyn Fn(f64) -> f64,
+    flanks: Flanks,
+    round: Rounding,
+) -> std::result::Result<Vec<Seg>, String> {
     let zf = f64::from(z);
     if psi(ra) <= 0.0 || rf <= 0.0 || ra <= rf {
         return Err("pointed or rootless teeth".into());
@@ -1334,36 +1495,53 @@ fn toothed_outline(z: u32, rf: f64, ra: f64, r_flank: f64, psi: &dyn Fn(f64) -> 
     const N: usize = 8;
     let rs: Vec<f64> = (0..=N).map(|i| r0 + (ra - r0) * i as f64 / N as f64).collect();
     let step = 2.0 * std::f64::consts::PI / zf;
-    // Per tooth: the rising flank (root side first), the falling flank (tip first), and the
-    // points where the outline leaves and reaches the root circle.
-    struct Tooth {
-        right: Vec<[f64; 2]>,
-        left: Vec<[f64; 2]>,
-        root_in: [f64; 2],
-        root_out: [f64; 2],
+    // Tooth 0's rising side (below the x axis), from the root circle up to the tip circle.
+    let right: Vec<[f64; 2]> = rs.iter().map(|r| polar(*r, -psi(*r))).collect();
+    let radial = rf < r0;
+    let foot = if radial { polar(rf, -psi(r0)) } else { right[0] };
+    let mut side = Vec::new();
+    let (mut first, mut last, mut bottom, mut top) = (0, N, foot, right[N]);
+    if round.root > 0.0 {
+        // The fillet meets the radial line, or (when that is too short, or there is none) the
+        // straight piece from the foot to the flank's second point, which then replaces both.
+        let on_radial = if radial { corner_fillet(rf, true, foot, right[0], round.root, -step / 2.0).map(|f| (f, right[0], 0)) } else { None };
+        let ((on_root, on_side, arc), b, from) = match on_radial {
+            Some(f) => f,
+            None => corner_fillet(rf, true, foot, right[1], round.root, -step / 2.0)
+                .map(|f| (f, right[1], 1))
+                .ok_or("the root fillet is too large for these teeth")?,
+        };
+        side.push(arc);
+        side.push(Seg::Line(on_side, b));
+        bottom = on_root;
+        first = from;
+    } else if radial {
+        side.push(Seg::Line(foot, right[0]));
     }
-    let teeth: Vec<Tooth> = (0..z)
-        .map(|k| {
-            let t = step * f64::from(k);
-            let right: Vec<[f64; 2]> = rs.iter().map(|r| polar(*r, t - psi(*r))).collect();
-            let left: Vec<[f64; 2]> = rs.iter().rev().map(|r| polar(*r, t + psi(*r))).collect();
-            let (root_in, root_out) = if rf < r0 { (polar(rf, t - psi(r0)), polar(rf, t + psi(r0))) } else { (right[0], left[N]) };
-            Tooth { right, left, root_in, root_out }
-        })
-        .collect();
+    let tip = if round.tip > 0.0 {
+        let (on_tip, on_side, arc) =
+            corner_fillet(ra, false, right[N], right[N - 1], round.tip, 0.0).ok_or("the tip fillet is too large for these teeth")?;
+        last = N - 1;
+        top = on_tip;
+        Some((on_side, arc))
+    } else {
+        None
+    };
+    side.extend(flank(&right[first..=last], flanks));
+    if let Some((on_side, arc)) = tip {
+        side.push(Seg::Line(right[N - 1], on_side));
+        side.push(arc);
+    }
+    let mut tooth = side.clone();
+    tooth.push(Seg::Arc { c: [0.0, 0.0], a: top, b: [top[0], -top[1]] });
+    tooth.extend(mirrored(&side));
+    let left_bottom = [bottom[0], -bottom[1]];
     let mut out = Vec::new();
-    for (k, t) in teeth.iter().enumerate() {
-        if rf < r0 {
-            out.push(Seg::Line(t.root_in, t.right[0]));
-        }
-        out.extend(flank(&t.right, flanks));
-        out.push(Seg::Arc { c: [0.0, 0.0], a: t.right[N], b: t.left[0] });
-        out.extend(flank(&t.left, flanks));
-        if rf < r0 {
-            out.push(Seg::Line(t.left[N], t.root_out));
-        }
-        let next = &teeth[(k + 1) % teeth.len()];
-        out.push(Seg::Arc { c: [0.0, 0.0], a: t.root_out, b: next.root_in });
+    for k in 0..z {
+        let t = step * f64::from(k);
+        out.extend(rotated(&tooth, t));
+        let next = step * f64::from((k + 1) % z);
+        out.push(Seg::Arc { c: [0.0, 0.0], a: rot(left_bottom, t), b: rot(bottom, next) });
     }
     Ok(out)
 }
@@ -1403,31 +1581,9 @@ fn pulley_outline(p: f64, pld: f64, depth: f64, rg: f64, z: u32) -> std::result:
     Ok(out)
 }
 
-/// The edge of a cycloidal disc: the pins' path seen from the disc (`trochoid`) offset inwards
-/// by the pin radius, one fit spline per lobe from valley to valley. Refused where the pins
-/// would undercut the lobes or touch each other.
-fn cycloid_outline(r: f64, n: u32, e: f64, rr: f64) -> std::result::Result<Vec<Seg>, String> {
-    if !(e > 0.0 && e * f64::from(n + 1) < r && rr > 0.0) {
-        return Err("the eccentricity makes cusps on the lobes".into());
-    }
-    if rr >= cycloid_rho_min(r, n, e) || rr >= r * (std::f64::consts::PI / f64::from(n + 1)).sin() {
-        return Err(format!("pins of Ø{} undercut the lobes or touch each other", 2.0 * rr));
-    }
-    let edge = |u: f64| {
-        let (q, d, _) = trochoid(r, n, e, u);
-        let l = d[0].hypot(d[1]);
-        // The left normal of the counter-clockwise path points into the disc.
-        [q[0] - rr * d[1] / l, q[1] + rr * d[0] / l]
-    };
-    const PER_LOBE: u32 = 24;
-    let lobe = 2.0 * std::f64::consts::PI / f64::from(n);
-    Ok((0..n).map(|j| Seg::Spline((0..=PER_LOBE).map(|i| edge(lobe * (f64::from(j) + f64::from(i) / f64::from(PER_LOBE)))).collect())).collect())
-}
-
 /// The outline turned by `a` about the origin.
 fn rotated(segs: &[Seg], a: f64) -> Vec<Seg> {
-    let (s, c) = a.sin_cos();
-    let t = |p: &[f64; 2]| [c * p[0] - s * p[1], s * p[0] + c * p[1]];
+    let t = |p: &[f64; 2]| rot(*p, a);
     segs.iter()
         .map(|g| match g {
             Seg::Line(a, b) => Seg::Line(t(a), t(b)),
@@ -1437,16 +1593,24 @@ fn rotated(segs: &[Seg], a: f64) -> Vec<Seg> {
         .collect()
 }
 
-/// Draw a closed outline in a new XY sketch at height z0, with circles of the given diameters
-/// about the origin (a circle inside the outline is a hole in it, a circle round it the outside
-/// of a ring); the sketch's id. The curves go in as one edit of the sketch: drawn one command
+/// A circle drawn with an outline: its centre and diameter (inside the outline a hole in it,
+/// round it the outside of a ring).
+type Hole = ([f64; 2], f64);
+
+/// A circle about the axis.
+fn axial(d: f64) -> Hole {
+    ([0.0, 0.0], d)
+}
+
+/// Draw a closed outline in a new XY sketch at height z0, with circles (`Hole`); the sketch's
+/// id. The curves go in as one edit of the sketch: drawn one command
 /// at a time, each solves the whole sketch again, which grows with the square of the teeth.
-fn outline_sketch(s: &mut Session, segs: &[Seg], circles: &[f64], z0: f64) -> Result<Value> {
+fn outline_sketch(s: &mut Session, segs: &[Seg], circles: &[Hole], z0: f64) -> Result<Value> {
     outline_sketch_on(s, "XY", segs, circles, z0)
 }
 
 /// `outline_sketch` on a principal plane (`XY`, `XZ`, `YZ`), offset along its normal.
-fn outline_sketch_on(s: &mut Session, plane: &str, segs: &[Seg], circles: &[f64], offset: f64) -> Result<Value> {
+fn outline_sketch_on(s: &mut Session, plane: &str, segs: &[Seg], circles: &[Hole], offset: f64) -> Result<Value> {
     use solidcraft_geom::Vec2;
     use solidcraft_sketch::CurveKind;
     let sketch = run(s, "sketch.create", json!({"plane": plane, "offset": format!("{offset} mm")}))?["sketch"].clone();
@@ -1477,8 +1641,8 @@ fn outline_sketch_on(s: &mut Session, plane: &str, segs: &[Seg], circles: &[f64]
             };
             sk.add_curve(kind, None)?;
         }
-        for d in circles {
-            let c = sk.add_point(Vec2::new(0.0, 0.0), None)?;
+        for (at, d) in circles {
+            let c = sk.add_point(Vec2::new(at[0], at[1]), None)?;
             sk.add_curve(CurveKind::Circle { c, r: d / 2.0 }, None)?;
         }
         Ok(())
@@ -1491,15 +1655,15 @@ fn outline_sketch_on(s: &mut Session, plane: &str, segs: &[Seg], circles: &[f64]
 }
 
 /// The profiles to make solid: with circles drawn, the one through the point at radius
-/// `material` on the x axis (each circle's inside is a profile of its own as well as a hole);
-/// without, every profile.
-fn profiles(circles: &[f64], material: f64) -> Value {
+/// `material` on the +x axis (each circle's inside is a profile of its own as well as a hole;
+/// an offset hole sits on −x); without, every profile.
+fn profiles(circles: &[Hole], material: f64) -> Value {
     if circles.is_empty() { json!("all") } else { json!([{"point": [material, 0.0]}]) }
 }
 
 /// Draw a closed outline (and `circles`, as `outline_sketch`) in an XY sketch at height z0 and
 /// extrude it up by `h` (`op`: new, join or cut); `material` as in `profiles`.
-fn outline_solid(s: &mut Session, segs: &[Seg], circles: &[f64], material: f64, z0: f64, h: f64, op: &str) -> Result<()> {
+fn outline_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z0: f64, h: f64, op: &str) -> Result<()> {
     outline_sketch(s, segs, circles, z0)?;
     run(
         s,
@@ -1514,7 +1678,7 @@ fn outline_solid(s: &mut Session, segs: &[Seg], circles: &[f64], material: f64, 
 /// above, a right-hand helix); `material` as in `profiles`. The holes are drawn rather than cut
 /// afterwards: a boolean against the twisted faces costs many times the sweep.
 #[allow(clippy::too_many_arguments)]
-fn twisted_solid(s: &mut Session, segs: &[Seg], circles: &[f64], material: f64, z0: f64, h: f64, twist: f64, op: &str) -> Result<()> {
+fn twisted_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z0: f64, h: f64, twist: f64, op: &str) -> Result<()> {
     let sketch = outline_sketch(s, segs, circles, z0)?;
     let path = run(s, "sketch.create", json!({"plane": "XZ"}))?["sketch"].clone();
     // The XZ sketch's y runs down world z.
@@ -1615,28 +1779,30 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
                 thread(s, d, p, Vec3::new(r, 0.0, shank_end / 2.0), modeled);
             }
         }
-        Shape::Gear { tooth, z, w, bore, helix, herringbone } => {
+        Shape::Gear { tooth, z, w, bore, helix, herringbone, round, offset } => {
             // Swept flanks as arcs (see `Flanks`); a spur gear keeps the fit splines.
-            let segs = gear_outline(tooth, z, if helix == 0.0 { Flanks::Spline } else { Flanks::Arcs }).map_err(EngineError::Other)?;
+            let segs = gear_outline(tooth, z, if helix == 0.0 { Flanks::Spline } else { Flanks::Arcs }, round).map_err(EngineError::Other)?;
             // Between the bore and the tooth roots.
             let mat = (bore / 2.0 + tooth.root_radius(z)) / 2.0;
             // The teeth turn tan(helix)/r_pitch radians per mm up the axis.
             let rate = helix.tan() / tooth.pitch_radius(z);
             if helix == 0.0 {
-                outline_solid(s, &segs, &[bore], mat, 0.0, w, "new")?;
+                let mut holes = vec![axial(bore)];
+                holes.extend(offset.map(|(o, d)| ([-o, 0.0], d)));
+                outline_solid(s, &segs, &holes, mat, 0.0, w, "new")?;
             } else if herringbone {
                 // Two bodies meeting at mid-width: joining them costs far more than both sweeps.
                 let half = w / 2.0;
-                twisted_solid(s, &segs, &[bore], mat, 0.0, half, rate * half, "new")?;
-                twisted_solid(s, &rotated(&segs, rate * half), &[bore], mat, half, half, -rate * half, "new")?;
+                twisted_solid(s, &segs, &[axial(bore)], mat, 0.0, half, rate * half, "new")?;
+                twisted_solid(s, &rotated(&segs, rate * half), &[axial(bore)], mat, half, half, -rate * half, "new")?;
             } else {
-                twisted_solid(s, &segs, &[bore], mat, 0.0, w, rate * w, "new")?;
+                twisted_solid(s, &segs, &[axial(bore)], mat, 0.0, w, rate * w, "new")?;
             }
         }
         Shape::RingGear { space, z, w, od } => {
-            let segs = gear_outline(space, z, Flanks::Spline).map_err(EngineError::Other)?;
+            let segs = gear_outline(space, z, Flanks::Spline, Rounding::default()).map_err(EngineError::Other)?;
             // Between the tooth spaces' roots and the outside.
-            outline_solid(s, &segs, &[od], (space.tip_radius(z) + od / 2.0) / 2.0, 0.0, w, "new")?;
+            outline_solid(s, &segs, &[axial(od)], (space.tip_radius(z) + od / 2.0) / 2.0, 0.0, w, "new")?;
         }
         Shape::Worm { m, d1, starts, len, bore } => {
             let segs = worm_outline(m, d1, starts).map_err(EngineError::Other)?;
@@ -1647,13 +1813,9 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
             let (h, turn) = (len / pieces, total / pieces);
             let mut i = 0.0;
             while i < pieces {
-                twisted_solid(s, &rotated(&segs, turn * i), &[bore], mat, h * i, h, turn, "new")?;
+                twisted_solid(s, &rotated(&segs, turn * i), &[axial(bore)], mat, h * i, h, turn, "new")?;
                 i += 1.0;
             }
-        }
-        Shape::Cycloid { r, n, e, rr, w, bore } => {
-            let segs = cycloid_outline(r, n, e, rr).map_err(EngineError::Other)?;
-            outline_solid(s, &segs, &[bore], (bore / 2.0 + r - e - rr) / 2.0, 0.0, w, "new")?;
         }
         Shape::Pulley { p, pld, depth, rg, z, w, flange, bore } => {
             let segs = pulley_outline(p, pld, depth, rg, z).map_err(EngineError::Other)?;
@@ -1685,7 +1847,7 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
             f if !screw_drives(f).is_empty() => screw_sizes(f),
             "dowel_pin" => DOWEL.iter().map(|d| json!({"size": format!("{d}"), "d": d})).collect(),
             "bearing" => BEARINGS.iter().map(|r| json!({"size": r.0, "series": r.0.get(..2).unwrap_or(""), "bore": r.1, "outer": r.2, "width": r.3})).collect(),
-            f if gear_family(f).is_some() || f.starts_with("cycloidal_disc_") => drive_sizes(f),
+            f if gear_family(f).is_some() => drive_sizes(f),
             f if f.starts_with("pulley_") => match PULLEYS.iter().find(|r| r.0 == f) {
                 Some(&(_, p, pld, depth, ..)) => PULLEY_TEETH
                     .iter()
@@ -1702,8 +1864,6 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
         let (_, name, standard) = FAMILIES.iter().find(|f| f.0 == id).copied().unwrap_or(("", "", ""));
         let lengths = if let Some((kind, _)) = gear_family(id) {
             Some(if kind == GearKind::Worm { WORM_LENGTHS.to_vec() } else { GEAR_WIDTHS.to_vec() })
-        } else if id.starts_with("cycloidal_disc_") {
-            Some(DISC_WIDTHS.to_vec())
         } else if let Some(r) = PULLEYS.iter().find(|r| r.0 == id) {
             Some(r.6.to_vec())
         } else {
@@ -1739,20 +1899,9 @@ fn r3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
-/// The library rows of a gear or cycloidal disc family, each size's dimensions (mm; angles in
+/// The library rows of a gear family, each size's dimensions (mm; angles in
 /// degrees; helical gears at the default helix angle, worm wheels for a one-start worm).
 fn drive_sizes(family: &str) -> Vec<Value> {
-    if let Some(&(_, d)) = CYCLOIDS.iter().find(|c| c.0 == family) {
-        let r = d / 2.0;
-        return CYCLOID_LOBES
-            .iter()
-            .filter_map(|n| {
-                let (pin, e) = (cycloid_pin(r, *n)?, cycloid_e(r, *n));
-                Some(json!({"size": n.to_string(), "lobes": n, "pins": n + 1, "ratio": n, "pin_circle_diameter": d, "pin_diameter": pin,
-                            "eccentricity": r3(e), "outside_diameter": r3(2.0 * (r + e - pin / 2.0)), "bore": bore_for(r - e - pin / 2.0)}))
-            })
-            .collect();
-    }
     let Some((kind, m)) = gear_family(family) else { return Vec::new() };
     let teeth: &[u32] = match kind {
         GearKind::Ring => &RING_TEETH,
@@ -1846,7 +1995,6 @@ fn part_name(family: &str, size: &str, sh: &Shape) -> String {
         }
         Shape::Gear { z, w, .. } | Shape::RingGear { z, w, .. } => format!("{} m{m} z{z}x{w}", label(family)),
         Shape::Worm { starts, len, .. } => format!("{} m{m} {starts}-start x{len}", label(family)),
-        Shape::Cycloid { r, n, w, .. } => format!("{} Ø{} N{n}x{w}", label(family), 2.0 * r),
         Shape::Pulley { z, w, .. } => format!("{} {z}T x{w}", label(family)),
         Shape::Screw { len, .. } if screw_drives(family).len() > 1 => {
             let suffix = match drive_id(sh) {
@@ -1871,7 +2019,6 @@ fn identity(family: &str, size: &str, sh: &Shape) -> (String, String) {
         Shape::Gear { z, w, helix, .. } if *helix != 0.0 => format!("m{m} z{z} b{w} β{:.1}°", helix.to_degrees()),
         Shape::Gear { z, w, .. } | Shape::RingGear { z, w, .. } => format!("m{m} z{z} b{w}"),
         Shape::Worm { starts, len, .. } => format!("m{m} z{starts} L{len}"),
-        Shape::Cycloid { r, n, w, rr, .. } => format!("D{} N{n} d{} b{w}", 2.0 * r, 2.0 * rr),
         Shape::Pulley { z, w, .. } => format!("{z}T {w}mm"),
         _ => size.to_string(),
     };
@@ -1953,7 +2100,6 @@ fn label(family: &str) -> &'static str {
         f if f.starts_with("ring_gear_") => "Ring Gear",
         f if f.starts_with("worm_wheel_") => "Worm Wheel",
         f if f.starts_with("worm_") => "Worm",
-        f if f.starts_with("cycloidal_disc_") => "Cycloidal Disc",
         "pulley_gt2" => "GT2 Pulley",
         "pulley_htd3m" => "HTD3M Pulley",
         "pulley_htd5m" => "HTD5M Pulley",
@@ -1973,7 +2119,58 @@ fn length_param(p: &Value, cmd: &str) -> Result<Option<f64>> {
 
 /// What a saved part was made with besides size, length and bore.
 fn saved_extra(part: &solidcraft_doc::StandardPart) -> Extra {
-    Extra { helix: part.helix, starts: part.starts, drive: part.drive.clone(), modeled: part.modeled_thread }
+    Extra {
+        helix: part.helix,
+        starts: part.starts,
+        drive: part.drive.clone(),
+        modeled: part.modeled_thread,
+        pressure_angle: part.pressure_angle,
+        profile_shift: part.profile_shift,
+        backlash: part.backlash,
+        root_fillet: part.root_fillet,
+        tip_fillet: part.tip_fillet,
+        offset_hole: part.offset_hole,
+    }
+}
+
+/// A part's options for a rebuild: each one the call names is as given (`null`: back to the
+/// default), the others as they were saved.
+fn resized_extra(p: &Value, given: Extra, saved: Extra) -> Extra {
+    fn pick<T>(p: &Value, key: &str, given: T, saved: T) -> T {
+        if p.get(key).is_some() { given } else { saved }
+    }
+    Extra {
+        helix: pick(p, "helix_angle", given.helix, saved.helix),
+        starts: pick(p, "starts", given.starts, saved.starts),
+        drive: pick(p, "drive", given.drive, saved.drive),
+        modeled: pick(p, "thread", given.modeled, saved.modeled),
+        pressure_angle: pick(p, "pressure_angle", given.pressure_angle, saved.pressure_angle),
+        profile_shift: pick(p, "profile_shift", given.profile_shift, saved.profile_shift),
+        backlash: pick(p, "backlash", given.backlash, saved.backlash),
+        root_fillet: pick(p, "root_fillet", given.root_fillet, saved.root_fillet),
+        tip_fillet: pick(p, "tip_fillet", given.tip_fillet, saved.tip_fillet),
+        offset_hole: pick(p, "offset_hole", given.offset_hole, saved.offset_hole),
+    }
+}
+
+/// The part as saved: its family, size and length, and what it was made with.
+fn standard_part(family: &str, size: &str, sh: &Shape, bore: Option<f64>, extra: &Extra) -> solidcraft_doc::StandardPart {
+    solidcraft_doc::StandardPart {
+        family: family.to_string(),
+        size: size.to_string(),
+        length: shape_len(sh),
+        bore,
+        helix: extra.helix,
+        starts: extra.starts,
+        drive: extra.drive.clone(),
+        modeled_thread: extra.modeled,
+        pressure_angle: extra.pressure_angle,
+        profile_shift: extra.profile_shift,
+        backlash: extra.backlash,
+        root_fillet: extra.root_fillet,
+        tip_fillet: extra.tip_fillet,
+        offset_hole: extra.offset_hole,
+    }
 }
 
 fn insert(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1996,16 +2193,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let c = run(s, "component.create", json!({"name": name, "grounded": false}))?;
     let (comp, occ) = (c["component"].as_u64().unwrap_or(0), c["occurrence"].as_u64().unwrap_or(0));
     build(s, &sh)?;
-    let part = solidcraft_doc::StandardPart {
-        family: family.clone(),
-        size: size.clone(),
-        length: shape_len(&sh),
-        bore,
-        helix: extra.helix,
-        starts: extra.starts,
-        drive: extra.drive.clone(),
-        modeled_thread: extra.modeled,
-    };
+    let part = standard_part(&family, &size, &sh, bore, &extra);
     s.doc_mut().parts.insert(comp, part);
     set_identity(s, comp, identity(&family, &size, &sh), None);
     run(s, "component.activate", json!({"component": active}))?;
@@ -2062,7 +2250,7 @@ fn hole_wall(s: &Session, a: Vec3) -> Option<Vec3> {
 fn shape_len(sh: &Shape) -> Option<f64> {
     match sh {
         Shape::Screw { len, .. } | Shape::Rod { len, .. } => Some(*len),
-        Shape::Gear { w, .. } | Shape::RingGear { w, .. } | Shape::Cycloid { w, .. } | Shape::Pulley { w, .. } => Some(*w),
+        Shape::Gear { w, .. } | Shape::RingGear { w, .. } | Shape::Pulley { w, .. } => Some(*w),
         Shape::Worm { len, .. } => Some(*len),
         _ => None,
     }
@@ -2092,14 +2280,9 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     let part = s.doc.parts.get(&comp).cloned().ok_or_else(|| bad(cmd, "that component is not a standard part"))?;
     let size = str_(p, "size").map(str::to_string).unwrap_or(part.size.clone());
     let length = length_param(p, cmd)?.or(if size == part.size { part.length } else { None });
-    let bore = bore_param(p, cmd)?.or(part.bore);
+    let bore = if p.get("bore").is_some() { bore_param(p, cmd)? } else { part.bore };
     let given = extra_params(s, p, cmd)?;
-    let extra = Extra {
-        helix: given.helix.or(part.helix),
-        starts: given.starts.or(part.starts),
-        drive: given.drive.or(part.drive.clone()),
-        modeled: if p.get("thread").is_some() { given.modeled } else { part.modeled_thread },
-    };
+    let extra = resized_extra(p, given, saved_extra(&part));
     let sh = shape(&part.family, &size, length, extra.clone()).and_then(|sh| with_bore(sh, bore)).map_err(|e| bad(cmd, e))?;
     // Rebuild: the component's features go, the new shape is built in their place.
     let ids: Vec<u64> = s.doc.features.iter().filter(|f| f.component == comp).map(|f| f.id).collect();
@@ -2112,16 +2295,7 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
     let name = part_name(&part.family, &size, &sh);
     let was = shape(&part.family, &part.size, part.length, saved_extra(&part)).ok().map(|old| identity(&part.family, &part.size, &old));
     set_identity(s, comp, identity(&part.family, &size, &sh), was);
-    let saved = solidcraft_doc::StandardPart {
-        size: size.clone(),
-        length: shape_len(&sh),
-        bore,
-        helix: extra.helix,
-        starts: extra.starts,
-        drive: extra.drive.clone(),
-        modeled_thread: extra.modeled,
-        ..part
-    };
+    let saved = standard_part(&part.family, &size, &sh, bore, &extra);
     s.doc_mut().parts.insert(comp, saved);
     if let Some(c) = s.doc_mut().components.iter_mut().find(|c| c.id == comp) {
         c.name = name.clone();
@@ -2430,7 +2604,7 @@ mod tests {
             let rb = tooth.pitch_radius(z) * tooth.alpha.cos();
             let (r0, ra) = (rb.max(tooth.root_radius(z)), tooth.tip_radius(z));
             let psi = |r: f64| std::f64::consts::PI / (2.0 * f64::from(z)) + super::inv(tooth.alpha) - super::inv((rb / r).min(1.0).acos());
-            let segs = super::gear_outline(tooth, z, super::Flanks::Arcs).unwrap_or_default();
+            let segs = super::gear_outline(tooth, z, super::Flanks::Arcs, super::Rounding::default()).unwrap_or_default();
             let arcs: Vec<([f64; 2], f64)> = segs
                 .iter()
                 .filter_map(|g| if let super::Seg::Arc { c, a, .. } = g { Some((*c, (a[0] - c[0]).hypot(a[1] - c[1]))) } else { None })
@@ -2443,6 +2617,93 @@ mod tests {
                 })
                 .fold(0.0, f64::max);
             assert!(worst < 5e-3 * m, "m{m} z{z}: {worst}");
+        }
+    }
+
+    /// The tooth options: a profile shift moves the tip out by x·m and thickens the tooth, a
+    /// larger pressure angle or backlash thins it, a root fillet adds material in the corners and
+    /// a tip fillet takes it off; an offset hole goes through the web. They are saved with the
+    /// part and kept through a resize, which can also set one back to its default.
+    #[test]
+    fn gear_tooth_options_shape_the_teeth_and_are_kept() {
+        let base = json!({"family": "spur_gear_m1", "size": "20", "length": 5});
+        let with = |extra: Value| {
+            let mut p = base.clone();
+            if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                p.extend(e.clone());
+            }
+            let s = inserted("spur_gear_m1", p);
+            let v = measure(&s, "Spur Gear m1 z20");
+            (s, v)
+        };
+        let (_, plain) = with(json!({}));
+        let (shifted, v_shift) = with(json!({"profile_shift": 0.5}));
+        let (lo, hi) = bbox(&shifted, "Spur Gear m1 z20");
+        assert!((hi.x - lo.x - 23.0).abs() < 0.05, "tip Ø {}", hi.x - lo.x);
+        assert!(v_shift > plain, "{v_shift} vs {plain}");
+        let (_, v_pa) = with(json!({"pressure_angle": 25}));
+        assert!((v_pa - plain).abs() > 0.5, "a 25° rack changes the tooth: {v_pa} vs {plain}");
+        let (_, v_back) = with(json!({"backlash": 0.2}));
+        // Each tooth half the backlash thinner over about two modules of height, 5 wide.
+        let expected = 20.0 * 0.1 * 2.0 * 5.0;
+        assert!((plain - v_back - expected).abs() < 0.3 * expected, "{} vs {expected}", plain - v_back);
+        let (_, v_root) = with(json!({"root_fillet": 0.3}));
+        let (_, v_tip) = with(json!({"tip_fillet": 0.2}));
+        assert!(v_root > plain && v_tip < plain, "root {v_root} tip {v_tip} plain {plain}");
+        let (holed, v_hole) = with(json!({"offset_hole": [5.5, 2]}));
+        let hole = std::f64::consts::PI * 1.0 * 1.0 * 5.0;
+        assert!((plain - v_hole - hole).abs() < 0.02 * hole, "{} vs {hole}", plain - v_hole);
+        let comp = holed.doc.components.iter().find(|c| c.name.starts_with("Spur Gear")).map_or(0, |c| c.id);
+        assert_eq!(holed.doc.parts.get(&comp).and_then(|p| p.offset_hole), Some([5.5, 2.0]));
+        // Kept through a resize; `null` sets one back.
+        let (mut r, _) = with(json!({"profile_shift": 0.3, "tip_fillet": 0.2}));
+        let comp = r.doc.components.iter().find(|c| c.name.starts_with("Spur Gear")).map_or(0, |c| c.id);
+        run(&mut r, "parts.resize", json!({"component": comp, "size": "24"}));
+        let part = r.doc.parts.get(&comp).cloned().unwrap_or_else(|| panic!("no part"));
+        assert_eq!((part.profile_shift, part.tip_fillet), (Some(0.3), Some(0.2)));
+        run(&mut r, "parts.resize", json!({"component": comp, "profile_shift": null}));
+        let part = r.doc.parts.get(&comp).cloned().unwrap_or_else(|| panic!("no part"));
+        assert_eq!((part.profile_shift, part.tip_fillet), (None, Some(0.2)));
+        let reopened = solidcraft_doc::Document::from_json(&r.doc.to_json()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(reopened.parts.get(&comp).and_then(|p| p.tip_fillet), Some(0.2));
+        // Out of range, the wrong gear, or a hole that does not fit: refused.
+        for bad in [
+            json!({"family": "spur_gear_m1", "size": "20", "pressure_angle": 40}),
+            json!({"family": "spur_gear_m1", "size": "20", "profile_shift": 1.5}),
+            json!({"family": "spur_gear_m1", "size": "20", "backlash": 2}),
+            json!({"family": "spur_gear_m1", "size": "20", "root_fillet": 0.8}),
+            json!({"family": "spur_gear_m1", "size": "20", "offset_hole": [8, 2]}),
+            json!({"family": "helical_gear_m1", "size": "20", "offset_hole": [5, 2]}),
+            json!({"family": "worm_wheel_m1", "size": "30", "profile_shift": 0.2}),
+            json!({"family": "socket_head_cap_screw", "size": "M6", "backlash": 0.1}),
+        ] {
+            assert!(Session::default().execute("parts.gear", &bad).is_err(), "{bad}");
+        }
+    }
+
+    /// A rounded outline stays one closed chain: each piece ends where the next begins, and the
+    /// fillets have the radius asked for.
+    #[test]
+    fn rounded_tooth_outlines_close_and_their_fillets_have_their_radius() {
+        for (z, flanks) in [(12u32, super::Flanks::Spline), (40, super::Flanks::Spline), (20, super::Flanks::Arcs)] {
+            let tooth = super::Involute::iso53(2.0, 0.0);
+            let segs = super::gear_outline(tooth, z, flanks, super::Rounding { root: 0.6, tip: 0.4 }).unwrap_or_else(|e| panic!("{e}"));
+            let ends = |g: &super::Seg| match g {
+                super::Seg::Line(a, b) | super::Seg::Arc { a, b, .. } => (*a, *b),
+                super::Seg::Spline(p) => (p.first().copied().unwrap_or_default(), p.last().copied().unwrap_or_default()),
+            };
+            // Every end point is another piece's end point (the chain closes).
+            let points: Vec<[f64; 2]> = segs.iter().flat_map(|g| [ends(g).0, ends(g).1]).collect();
+            for p in &points {
+                let n = points.iter().filter(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 1e-9).count();
+                assert!(n >= 2, "z{z}: loose end {p:?}");
+            }
+            let radii: Vec<f64> = segs
+                .iter()
+                .filter_map(|g| if let super::Seg::Arc { c, a, .. } = g { Some((a[0] - c[0]).hypot(a[1] - c[1])) } else { None })
+                .collect();
+            assert!(radii.iter().filter(|r| (*r - 0.6).abs() < 1e-9).count() == 2 * z as usize, "z{z} root fillets");
+            assert!(radii.iter().filter(|r| (*r - 0.4).abs() < 1e-9).count() == 2 * z as usize, "z{z} tip fillets");
         }
     }
 
@@ -2535,24 +2796,6 @@ mod tests {
         let l = run(&mut Session::default(), "parts.library", json!({"family": "worm_wheel_m1"}));
         let z30 = l["sizes"].as_array().and_then(|a| a.iter().find(|x| x["size"] == "30")).cloned().unwrap_or_default();
         assert_eq!(z30["center_distance"].as_f64(), Some(21.0), "{z30}");
-    }
-
-    /// A cycloidal disc's edge is the path of n + 1 pins rolling round it, offset by their radius:
-    /// at most r + e − r_pin from the centre, at least r − e − r_pin.
-    #[test]
-    fn cycloidal_discs_follow_their_pins() {
-        let s = inserted("cycloidal_disc_d80", json!({"size": "20", "length": 6}));
-        let l = run(&mut Session::default(), "parts.library", json!({"family": "cycloidal_disc_d80"}));
-        let n20 = l["sizes"].as_array().and_then(|a| a.iter().find(|x| x["size"] == "20")).cloned().unwrap_or_default();
-        assert_eq!((n20["pins"].as_u64(), n20["pin_diameter"].as_f64()), (Some(21), Some(5.0)), "{n20}");
-        let e = 40.0 / 2.0 / 21.0;
-        let radii: Vec<f64> = points(&s, "Cycloidal Disc").iter().map(|p| p.x.hypot(p.y)).filter(|r| *r > 20.0).collect();
-        let (lo, hi) = radii.iter().fold((f64::MAX, f64::MIN), |(a, b), r| (a.min(*r), b.max(*r)));
-        assert!((hi - (40.0 + e - 2.5)).abs() < 0.02 && (lo - (40.0 - e - 2.5)).abs() < 0.02, "{lo} {hi}");
-        // A bore for its eccentric bearing: 30 within the lobes' 36.5.
-        assert!((inner(&s, "Cycloidal Disc") - 15.0).abs() < 1e-3, "{}", inner(&s, "Cycloidal Disc"));
-        // Pins that would not fit: refused.
-        assert!(Session::default().execute("parts.gear", &json!({"family": "cycloidal_disc_d40", "size": "40"})).is_err());
     }
 
     #[test]

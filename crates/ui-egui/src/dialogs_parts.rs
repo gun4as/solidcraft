@@ -123,18 +123,10 @@ pub struct Pt {
     pub cats: Vec<Category>,
     /// The Gear / Pulley dialog (its families only, a bore field, "Width" for the length).
     pub gears: bool,
-    /// The bore typed in (mm); empty: the size's default.
-    pub bore: String,
-    /// A helical gear's helix angle typed in (degrees or an angle); empty: the default.
-    pub helix: String,
-    /// A worm wheel's worm starts typed in; empty: one.
-    pub starts: String,
+    /// What the part is made with besides size and length.
+    pub opt: Options,
     /// The series the size list shows (bearings: "62"…); empty: all.
     pub series: String,
-    /// A screw's drive (its id); empty: the family's first.
-    pub drive: String,
-    /// The thread modelled (cut into the part, slower) rather than cosmetic.
-    pub modeled: bool,
     /// What is typed in the search field, and what it found (for `hits_for`).
     pub query: String,
     pub hits: Vec<Hit>,
@@ -151,12 +143,8 @@ impl Pt {
             lib: None,
             cats: Vec::new(),
             gears,
-            bore: String::new(),
-            helix: String::new(),
-            starts: String::new(),
+            opt: Options::default(),
             series: String::new(),
-            drive: String::new(),
-            modeled: false,
             query: String::new(),
             hits: Vec::new(),
             hits_for: String::new(),
@@ -169,9 +157,172 @@ impl Pt {
         self.size = size;
         self.length = None;
         self.series.clear();
-        self.bore.clear();
-        self.starts.clear();
-        self.drive.clear();
+        // The tooth's options carry over between gears; what belongs to a size goes.
+        self.opt = Options { modeled: self.opt.modeled, helix: self.opt.helix.clone(), pressure_angle: self.opt.pressure_angle.clone(), ..Options::default() };
+    }
+}
+
+/// What a part is made with besides its family, size and length, as typed in a dialog (empty:
+/// the default). The Insert and Change Part Size dialogs show a row for each option the part's
+/// family takes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Options {
+    /// The bore (mm).
+    pub bore: String,
+    /// A helical gear's helix angle (degrees or an angle).
+    pub helix: String,
+    /// A worm wheel's worm starts.
+    pub starts: String,
+    /// A screw's drive (its id).
+    pub drive: String,
+    /// The thread modelled (cut into the part, slower) rather than cosmetic.
+    pub modeled: bool,
+    /// A gear's normal pressure angle (degrees), profile shift coefficient, backlash and root and
+    /// tip fillet radii (mm).
+    pub pressure_angle: String,
+    pub profile_shift: String,
+    pub backlash: String,
+    pub root_fillet: String,
+    pub tip_fillet: String,
+    /// A spur gear's offset hole: its centre's distance from the axis and its diameter (mm).
+    pub hole_at: String,
+    pub hole_diameter: String,
+}
+
+/// "1,5 mm" / "1.5" / "20°" → 1.5 / 20; empty: none.
+fn number(text: &str, what: &str) -> Result<Option<f64>, String> {
+    let t = text.trim().trim_end_matches("mm").trim_end_matches('°').trim().replace(',', ".");
+    if t.is_empty() {
+        return Ok(None);
+    }
+    t.parse::<f64>().ok().filter(|v| v.is_finite()).map(Some).ok_or_else(|| format!("the {what} must be a number"))
+}
+
+/// A number the way a field shows it (no trailing zeros).
+fn shown(v: f64) -> String {
+    let t = format!("{v:.4}");
+    t.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+impl Options {
+    /// The options a saved part was made with.
+    pub fn of_part(part: &solidcraft_engine::doc::StandardPart) -> Self {
+        let f = |v: Option<f64>| v.map(shown).unwrap_or_default();
+        Options {
+            bore: f(part.bore),
+            helix: f(part.helix.map(f64::to_degrees)),
+            starts: part.starts.map(|n| n.to_string()).unwrap_or_default(),
+            drive: part.drive.clone().unwrap_or_default(),
+            modeled: part.modeled_thread,
+            pressure_angle: f(part.pressure_angle.map(f64::to_degrees)),
+            profile_shift: f(part.profile_shift),
+            backlash: f(part.backlash),
+            root_fillet: f(part.root_fillet),
+            tip_fillet: f(part.tip_fillet),
+            hole_at: f(part.offset_hole.map(|h| h[0])),
+            hole_diameter: f(part.offset_hole.map(|h| h[1])),
+        }
+    }
+
+    /// Put the options family `f` takes into the command's parameters. With `every`, an empty
+    /// field is sent as `null` (back to the default, for a rebuild); without, it is left out.
+    pub fn params(&self, f: &Family, p: &mut Value, every: bool) -> Result<(), String> {
+        let takes = |o: &str| f.options.iter().any(|x| x == o);
+        let mut put = |key: &str, v: Option<Value>| {
+            match v {
+                Some(v) => p[key] = v,
+                None if every => p[key] = Value::Null,
+                None => {}
+            }
+        };
+        if takes("bore") {
+            put("bore", number(&self.bore, "bore")?.map(|b| json!(b)));
+        }
+        if takes("helix_angle") {
+            // A plain number is degrees; anything else goes as an angle expression ("20 deg").
+            let h = self.helix.trim().trim_end_matches('°').trim().replace(',', ".");
+            put("helix_angle", (!h.is_empty()).then(|| h.parse::<f64>().map_or_else(|_| json!(h), |d| json!(d))));
+        }
+        if takes("starts") {
+            let n = match self.starts.trim() {
+                "" => None,
+                t => Some(t.parse::<u32>().ok().filter(|n| (1..=4).contains(n)).ok_or("the worm's starts must be 1…4")?),
+            };
+            put("starts", n.map(|n| json!(n)));
+        }
+        if takes("drive") {
+            put("drive", f.drives.iter().any(|d| d.0 == self.drive).then(|| json!(self.drive)));
+        }
+        if takes("thread") {
+            put("thread", if self.modeled { Some(json!("modeled")) } else if every { Some(json!("cosmetic")) } else { None });
+        }
+        if takes("pressure_angle") {
+            put("pressure_angle", number(&self.pressure_angle, "pressure angle")?.map(|v| json!(v)));
+        }
+        for (key, text, what) in [
+            ("profile_shift", &self.profile_shift, "profile shift"),
+            ("backlash", &self.backlash, "backlash"),
+            ("root_fillet", &self.root_fillet, "root fillet"),
+            ("tip_fillet", &self.tip_fillet, "tip fillet"),
+        ] {
+            if takes(key) {
+                put(key, number(text, what)?.map(|v| json!(v)));
+            }
+        }
+        if takes("offset_hole") {
+            let hole = match (number(&self.hole_at, "offset hole's distance")?, number(&self.hole_diameter, "offset hole's diameter")?) {
+                (Some(at), Some(d)) => Some(json!([at, d])),
+                (None, None) => None,
+                _ => return Err("an offset hole needs both its distance and its diameter".into()),
+            };
+            put("offset_hole", hole);
+        }
+        Ok(())
+    }
+
+    /// A row for each option family `f` takes.
+    pub fn rows(&mut self, ui: &mut egui::Ui, f: &Family) {
+        let takes = |o: &str| f.options.iter().any(|x| x == o);
+        if takes("bore") {
+            text_row(ui, "Bore", &mut self.bore, "automatic");
+        }
+        if takes("helix_angle") {
+            text_row(ui, "Helix angle", &mut self.helix, "20°");
+        }
+        if takes("starts") {
+            text_row(ui, "Starts", &mut self.starts, "1");
+        }
+        if takes("drive") {
+            let names: Vec<&str> = f.drives.iter().map(|d| crate::i18n::tr_label(&d.1)).collect();
+            let mut at = f.drives.iter().position(|d| d.0 == self.drive).unwrap_or(0);
+            choice_row(ui, "Drive", "pt_drive", &mut at, &names);
+            self.drive = f.drives.get(at).map(|d| d.0.clone()).unwrap_or_default();
+        }
+        if takes("thread") {
+            let kinds = [crate::i18n::tr_label("Cosmetic"), crate::i18n::tr_label("Modeled (slower)")];
+            let mut at = usize::from(self.modeled);
+            choice_row(ui, "Thread", "pt_thread", &mut at, &kinds);
+            self.modeled = at == 1;
+        }
+        if takes("pressure_angle") {
+            text_row(ui, "Pressure angle", &mut self.pressure_angle, "20°");
+        }
+        if takes("profile_shift") {
+            text_row(ui, "Profile shift", &mut self.profile_shift, "0");
+        }
+        if takes("backlash") {
+            text_row(ui, "Backlash", &mut self.backlash, "0 mm");
+        }
+        if takes("root_fillet") {
+            text_row(ui, "Root fillet", &mut self.root_fillet, "0 mm");
+        }
+        if takes("tip_fillet") {
+            text_row(ui, "Tip fillet", &mut self.tip_fillet, "0 mm");
+        }
+        if takes("offset_hole") {
+            text_row(ui, "Offset hole at", &mut self.hole_at, "none");
+            text_row(ui, "Offset hole Ø", &mut self.hole_diameter, "none");
+        }
     }
 }
 
@@ -284,26 +435,7 @@ pub fn insert_params(lib: &[Family], k: &Pt, hole: Option<&Sel>) -> Result<Value
     if !k.name.trim().is_empty() {
         p["name"] = json!(k.name.trim());
     }
-    let takes = |o: &str| f.options.iter().any(|x| x == o);
-    if takes("bore") && !k.bore.trim().is_empty() {
-        let b: f64 = k.bore.trim().trim_end_matches("mm").trim().replace(',', ".").parse().map_err(|_| "the bore must be a number (mm)")?;
-        p["bore"] = json!(b);
-    }
-    if takes("helix_angle") && !k.helix.trim().is_empty() {
-        // A plain number is degrees; anything else goes as an angle expression ("20 deg").
-        let h = k.helix.trim().trim_end_matches('°').trim().replace(',', ".");
-        p["helix_angle"] = h.parse::<f64>().map_or_else(|_| json!(h), |d| json!(d));
-    }
-    if takes("starts") && !k.starts.trim().is_empty() {
-        let n: u32 = k.starts.trim().parse().ok().filter(|n| (1..=4).contains(n)).ok_or("the worm's starts must be 1…4")?;
-        p["starts"] = json!(n);
-    }
-    if takes("drive") && f.drives.iter().any(|d| d.0 == k.drive) {
-        p["drive"] = json!(k.drive);
-    }
-    if takes("thread") && k.modeled {
-        p["thread"] = json!("modeled");
-    }
+    k.opt.params(f, &mut p, false)?;
     Ok(p)
 }
 
@@ -529,28 +661,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             k.length = i.checked_sub(1);
         });
     }
-    let takes = |o: &str| f.options.iter().any(|x| x == o);
-    if takes("bore") {
-        text_row(ui, "Bore", &mut k.bore, "automatic");
-    }
-    if takes("helix_angle") {
-        text_row(ui, "Helix angle", &mut k.helix, "20°");
-    }
-    if takes("starts") {
-        text_row(ui, "Starts", &mut k.starts, "1");
-    }
-    if takes("drive") {
-        let names: Vec<&str> = f.drives.iter().map(|d| crate::i18n::tr_label(&d.1)).collect();
-        let mut at = f.drives.iter().position(|d| d.0 == k.drive).unwrap_or(0);
-        choice_row(ui, "Drive", "pt_drive", &mut at, &names);
-        k.drive = f.drives.get(at).map(|d| d.0.clone()).unwrap_or_default();
-    }
-    if takes("thread") {
-        let kinds = [crate::i18n::tr_label("Cosmetic"), crate::i18n::tr_label("Modeled (slower)")];
-        let mut at = usize::from(k.modeled);
-        choice_row(ui, "Thread", "pt_thread", &mut at, &kinds);
-        k.modeled = at == 1;
-    }
+    k.opt.rows(ui, f);
     text_row(ui, "Name", &mut k.name, "automatic");
     // The part (its picture follows every field that shapes it), and its table values.
     let shown = insert_params(&lib, k, None).ok().map_or(Shown::Missing, |p| picture(ui.ctx(), &p));
@@ -657,16 +768,16 @@ mod tests {
             {"family": "worm_wheel_m1", "name": "Worm wheel", "sizes": [{"size": "30"}], "lengths": [10], "options": ["bore", "starts"]},
             {"family": "ring_gear_m1", "name": "Ring gear", "sizes": [{"size": "60"}], "lengths": [10], "options": []},
         ]}));
-        let k = Pt { bore: "6".into(), helix: "-15".into(), starts: "2".into(), ..Pt::new(true) };
+        let k = Pt { opt: Options { bore: "6".into(), helix: "-15".into(), starts: "2".into(), ..Options::default() }, ..Pt::new(true) };
         let p = insert_params(&l, &k, None).unwrap();
         assert_eq!((p["bore"].clone(), p["helix_angle"].clone(), p.get("starts")), (json!(6.0), json!(-15.0), None));
-        let p = insert_params(&l, &Pt { helix: "0.3 rad".into(), ..k.clone() }, None).unwrap();
+        let p = insert_params(&l, &Pt { opt: Options { helix: "0.3 rad".into(), ..k.opt.clone() }, ..k.clone() }, None).unwrap();
         assert_eq!(p["helix_angle"], "0.3 rad");
         let p = insert_params(&l, &Pt { family: 1, ..k.clone() }, None).unwrap();
         assert_eq!((p["starts"].clone(), p.get("helix_angle")), (json!(2), None));
         let p = insert_params(&l, &Pt { family: 2, ..k.clone() }, None).unwrap();
         assert!(p.get("bore").is_none() && p.get("starts").is_none(), "{p}");
-        assert!(insert_params(&l, &Pt { family: 1, starts: "7".into(), ..k }, None).is_err());
+        assert!(insert_params(&l, &Pt { family: 1, opt: Options { starts: "7".into(), ..k.opt.clone() }, ..k }, None).is_err());
         // A screw: its drive when it has a choice, and a modelled thread.
         let l = families(&json!({"families": [
             {"family": "pan_head_screw", "name": "Pan head screw", "sizes": [{"size": "M4"}], "lengths": [10],
@@ -674,7 +785,7 @@ mod tests {
             {"family": "washer", "name": "Washer", "sizes": [{"size": "M4"}], "options": []},
         ]}));
         assert_eq!(l.first().map(|f| f.drives.len()), Some(2));
-        let k = Pt { drive: "hexalobular".into(), modeled: true, ..Pt::new(false) };
+        let k = Pt { opt: Options { drive: "hexalobular".into(), modeled: true, ..Options::default() }, ..Pt::new(false) };
         let p = insert_params(&l, &k, None).unwrap();
         assert_eq!((p["drive"].clone(), p["thread"].clone()), (json!("hexalobular"), json!("modeled")));
         let p = insert_params(&l, &Pt { family: 1, ..k }, None).unwrap();

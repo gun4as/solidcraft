@@ -2481,6 +2481,21 @@ pub struct StandardPart {
     /// The thread is modelled (cut into the part) rather than cosmetic.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub modeled_thread: bool,
+    /// A gear's tooth when chosen: normal pressure angle (radians), profile shift coefficient,
+    /// circular backlash (mm), root and tip fillet radii (mm); none: the defaults (20°, 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_angle: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_shift: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backlash: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_fillet: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_fillet: Option<f64>,
+    /// A spur gear's second hole when chosen: [distance of its centre from the axis, diameter], mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_hole: Option<[f64; 2]>,
 }
 
 /// A component whose contents come from another design file (Insert Design): where that file

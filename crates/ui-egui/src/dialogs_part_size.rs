@@ -1,4 +1,6 @@
-//! Change a placed standard part through the existing, undoable `parts.resize` command.
+//! Change a placed standard part through the existing, undoable `parts.resize` command: its
+//! size and length, and what its family is made with besides (a gear's bore, tooth and holes, a
+//! screw's drive and thread), opened on the values it was made with.
 
 use std::sync::Arc;
 
@@ -7,7 +9,7 @@ use solidcraft_engine::{Sel, doc::Document};
 
 use crate::SolveApp;
 use crate::dialogs::Kind;
-use crate::dialogs_parts::Family;
+use crate::dialogs_parts::{Family, Options};
 use crate::selection::SelInput;
 use crate::ui_kit::{choice_row, row};
 
@@ -40,6 +42,9 @@ pub struct Resize {
     pub component: u64,
     pub size: usize,
     pub length: Option<f64>,
+    /// The family's options, as the part was made and as edited.
+    pub opt: Options,
+    original_opt: Options,
     original_size: usize,
     family: Family,
     source: Arc<Document>,
@@ -123,7 +128,17 @@ impl Resize {
             "bearing" => s == part.size.trim(),
             _ => s.eq_ignore_ascii_case(&part.size),
         })?;
-        Some(Self { component, size, original_size: size, length: part.length, family, source: app.session.doc.clone() })
+        let opt = Options::of_part(part);
+        Some(Self {
+            component,
+            size,
+            original_size: size,
+            length: part.length,
+            original_opt: opt.clone(),
+            opt,
+            family,
+            source: app.session.doc.clone(),
+        })
     }
 
     fn current(&self, app: &SolveApp) -> Result<(), String> {
@@ -181,6 +196,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Resize) -> bool {
         choice_row(ui, "Length", "part_resize_length", &mut index, &labels);
         k.length = lengths.get(index).copied();
     }
+    let family = k.family.clone();
+    k.opt.rows(ui, &family);
     if let Some((size, _)) = k.family.sizes.get(k.size) {
         row(ui, "Configuration", |ui| {
             ui.label(configuration_name(size, k.length));
@@ -200,9 +217,11 @@ pub fn commands(app: &SolveApp, k: &Resize) -> Result<Vec<(String, Value)>, Stri
         }
         params["length"] = json!(length);
     }
-    if k.size == k.original_size && k.source.parts.get(&k.component).is_some_and(|part| part.length == k.length) {
+    if k.size == k.original_size && k.opt == k.original_opt && k.source.parts.get(&k.component).is_some_and(|part| part.length == k.length) {
         return Ok(Vec::new());
     }
+    // Every option the family takes: an emptied field sets it back to its default.
+    k.opt.params(&k.family, &mut params, true)?;
     Ok(vec![("parts.resize".into(), params)])
 }
 
@@ -421,6 +440,30 @@ mod tests {
         assert!(commands(&other, &k).is_err());
         app.run("document.units", json!({"units":"in"})).unwrap();
         assert!(commands(&app, &k).is_err());
+    }
+
+    /// A gear opens on what it was made with (its bore, tooth options and offset hole); changing
+    /// one rebuilds it with the others kept, emptying one sets it back to the default, and an
+    /// unchanged dialog does nothing.
+    #[test]
+    fn part_size_edits_a_gears_tooth_options() {
+        let mut app = SolveApp::new(Session::default(), crate::Services::default());
+        let p = json!({"family":"spur_gear_m1","size":"20","length":5,"bore":4,"profile_shift":0.3,"tip_fillet":0.2,"offset_hole":[5.5,2],"point":[0,0,0]});
+        let id = app.run("parts.gear", p).unwrap()["component"].as_u64().unwrap();
+        let undo = app.session.undo.len();
+        menu(&mut app, Target::Component { id });
+        let k = editor(&app);
+        assert_eq!((k.opt.bore.as_str(), k.opt.profile_shift.as_str(), k.opt.tip_fillet.as_str()), ("4", "0.3", "0.2"));
+        assert_eq!((k.opt.hole_at.as_str(), k.opt.hole_diameter.as_str()), ("5.5", "2"));
+        assert!(commands(&app, k).unwrap().is_empty(), "unchanged: nothing to do");
+        let Kind::PartSize(k) = &mut app.dialog.as_mut().unwrap().kind else { panic!("not a part-size dialog") };
+        k.opt.backlash = "0.1".into();
+        k.opt.profile_shift.clear();
+        apply(&mut app);
+        let part = &app.session.doc.parts[&id];
+        assert_eq!((part.backlash, part.profile_shift, part.tip_fillet, part.bore), (Some(0.1), None, Some(0.2), Some(4.0)));
+        assert_eq!(part.offset_hole, Some([5.5, 2.0]));
+        assert_eq!(app.session.undo.len(), undo + 1);
     }
 
     #[test]
