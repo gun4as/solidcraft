@@ -85,6 +85,26 @@ const FAMILIES: &[(&str, &str, &str)] = &[
     ("worm_m1_5", "Worm, axial module 1.5", "Archimedean (ZA), 20°"),
     ("worm_m2", "Worm, axial module 2", "Archimedean (ZA), 20°"),
     ("worm_m3", "Worm, axial module 3", "Archimedean (ZA), 20°"),
+    ("bevel_gear_m0_5", "Bevel gear, module 0.5", "ISO 53 profile, 20°, straight teeth (approximate)"),
+    ("bevel_gear_m1", "Bevel gear, module 1", "ISO 53 profile, 20°, straight teeth (approximate)"),
+    ("bevel_gear_m1_5", "Bevel gear, module 1.5", "ISO 53 profile, 20°, straight teeth (approximate)"),
+    ("bevel_gear_m2", "Bevel gear, module 2", "ISO 53 profile, 20°, straight teeth (approximate)"),
+    ("bevel_gear_m3", "Bevel gear, module 3", "ISO 53 profile, 20°, straight teeth (approximate)"),
+    ("bevel_pair_m0_5", "Bevel gear pair, module 0.5", "90° shafts, straight teeth (approximate)"),
+    ("bevel_pair_m1", "Bevel gear pair, module 1", "90° shafts, straight teeth (approximate)"),
+    ("bevel_pair_m1_5", "Bevel gear pair, module 1.5", "90° shafts, straight teeth (approximate)"),
+    ("bevel_pair_m2", "Bevel gear pair, module 2", "90° shafts, straight teeth (approximate)"),
+    ("bevel_pair_m3", "Bevel gear pair, module 3", "90° shafts, straight teeth (approximate)"),
+    ("worm_pair_m0_5", "Worm and wheel, module 0.5", "Archimedean worm, helical wheel"),
+    ("worm_pair_m1", "Worm and wheel, module 1", "Archimedean worm, helical wheel"),
+    ("worm_pair_m1_5", "Worm and wheel, module 1.5", "Archimedean worm, helical wheel"),
+    ("worm_pair_m2", "Worm and wheel, module 2", "Archimedean worm, helical wheel"),
+    ("worm_pair_m3", "Worm and wheel, module 3", "Archimedean worm, helical wheel"),
+    ("planetary_m0_5", "Planetary set, module 0.5", "sun, planets and ring, ISO 53 profile"),
+    ("planetary_m1", "Planetary set, module 1", "sun, planets and ring, ISO 53 profile"),
+    ("planetary_m1_5", "Planetary set, module 1.5", "sun, planets and ring, ISO 53 profile"),
+    ("planetary_m2", "Planetary set, module 2", "sun, planets and ring, ISO 53 profile"),
+    ("planetary_m3", "Planetary set, module 3", "sun, planets and ring, ISO 53 profile"),
     ("worm_wheel_m0_5", "Worm wheel, module 0.5", "helical teeth, not throated"),
     ("worm_wheel_m1", "Worm wheel, module 1", "helical teeth, not throated"),
     ("worm_wheel_m1_5", "Worm wheel, module 1.5", "helical teeth, not throated"),
@@ -104,9 +124,12 @@ enum GearKind {
     Ring,
     Worm,
     WormWheel,
+    /// A straight bevel gear: `size` its teeth and its mate's ("20:40"), 90° shafts.
+    Bevel,
 }
 
-const GEAR_KINDS: [(&str, GearKind); 6] = [
+const GEAR_KINDS: [(&str, GearKind); 7] = [
+    ("bevel_gear_", GearKind::Bevel),
     ("spur_gear_", GearKind::Spur),
     ("helical_gear_", GearKind::Helical),
     ("herringbone_gear_", GearKind::Herringbone),
@@ -124,6 +147,78 @@ fn gear_family(family: &str) -> Option<(GearKind, f64)> {
         let m = family.strip_prefix(prefix)?;
         MODULES.iter().find(|x| x.0 == m).map(|x| (*kind, x.1))
     })
+}
+
+/// Parts inserted together, meshing: a bevel gear pair, a worm with its wheel, a planetary set.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SetKind {
+    Bevel,
+    Worm,
+    Planetary,
+}
+
+/// A set family's kind and module: `planetary_m1` → (Planetary, 1).
+fn set_family(family: &str) -> Option<(SetKind, f64)> {
+    [("bevel_pair_", SetKind::Bevel), ("worm_pair_", SetKind::Worm), ("planetary_", SetKind::Planetary)].iter().find_map(|(prefix, kind)| {
+        let m = family.strip_prefix(prefix)?;
+        MODULES.iter().find(|x| x.0 == m).map(|x| (*kind, x.1))
+    })
+}
+
+/// Bevel gear pairs the library lists: (pinion teeth, gear teeth).
+const BEVEL_PAIRS: [(u32, u32); 10] = [(15, 15), (20, 20), (25, 25), (12, 24), (15, 30), (16, 32), (20, 40), (12, 36), (15, 45), (20, 60)];
+/// Worm drives the library lists: (worm starts, wheel teeth).
+const WORM_PAIRS: [(u32, u32); 8] = [(1, 20), (1, 30), (1, 40), (1, 50), (1, 60), (2, 30), (2, 40), (4, 40)];
+
+/// "20:40" (or "20/40") → (20, 40).
+fn pair(size: &str) -> Option<(u32, u32)> {
+    let (a, b) = size.split_once([':', '/'])?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
+/// A planetary set's teeth: (sun, planet, ring, planets).
+type Planetary = (u32, u32, u32, u32);
+
+/// "12-24-60/3" → (12, 24, 60, 3), checked: ring = sun + 2 planet, the planets clear of each
+/// other, and every planet meshing with the sun and the ring at once (`planetary_fits`).
+fn planetary(size: &str) -> Option<Planetary> {
+    let (teeth, n) = size.split_once('/')?;
+    let t: Vec<u32> = teeth.split('-').map(|x| x.trim().parse().ok()).collect::<Option<_>>()?;
+    let (&zs, &zp, &zr) = (t.first()?, t.get(1)?, t.get(2)?);
+    let set = (zs, zp, zr, n.trim().parse().ok()?);
+    planetary_fits(set).then_some(set)
+}
+
+/// Whether a planetary set assembles: ring = sun + 2 planet, 3…6 planets spaced evenly clear of
+/// each other's tips, and equally spaced planets each meshing with the sun and the ring
+/// ((sun + ring) a multiple of the planets).
+fn planetary_fits((zs, zp, zr, n): Planetary) -> bool {
+    let (zs_f, zp_f, nf) = (f64::from(zs), f64::from(zp), f64::from(n));
+    (3..=6).contains(&n)
+        && (6..=200).contains(&zs)
+        && (6..=200).contains(&zp)
+        && zr == zs + 2 * zp
+        && (zs + zr) % n == 0
+        && (zs_f + zp_f) * (std::f64::consts::PI / nf).sin() > zp_f + 2.5
+}
+
+/// The planetary sets the library lists, by gear ratio (sun in, carrier out, ring held).
+fn planetary_sets() -> Vec<Planetary> {
+    let mut out: Vec<Planetary> = Vec::new();
+    for n in [3, 4] {
+        for zs in 12..=30 {
+            for zp in 12..=36 {
+                let set = (zs, zp, zs + 2 * zp, n);
+                let ratio = 1.0 + f64::from(set.2) / f64::from(zs);
+                if planetary_fits(set) && !out.iter().any(|o| (1.0 + f64::from(o.2) / f64::from(o.0) - ratio).abs() < 0.2) {
+                    out.push(set);
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| (f64::from(a.2) / f64::from(a.0)).total_cmp(&(f64::from(b.2) / f64::from(b.0))));
+    out.truncate(16);
+    out
 }
 
 /// Tooth counts the library lists (any 6…200 can be asked for).
@@ -178,7 +273,7 @@ fn bore_for(root_radius: f64) -> f64 {
 
 /// The library's categories, as the dialogs show them: (id, name, group, and a part that
 /// pictures the category: family, size, length).
-const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 12] = [
+const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 14] = [
     ("screws", "Screws", "fasteners", "socket_head_cap_screw", "M6", 16.0),
     ("set_screws", "Set screws", "fasteners", "set_screw_dog", "M8", 10.0),
     ("nuts", "Nuts", "fasteners", "hex_nut", "M8", 0.0),
@@ -188,7 +283,9 @@ const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 12] = [
     ("spur_gears", "Spur", "gears_pulleys", "spur_gear_m1", "16", 6.0),
     ("helical_gears", "Helical", "gears_pulleys", "helical_gear_m1", "14", 6.0),
     ("herringbone_gears", "Herringbone", "gears_pulleys", "herringbone_gear_m1", "14", 8.0),
+    ("bevel", "Bevel", "gears_pulleys", "bevel_pair_m1", "20:40", 0.0),
     ("ring_gears", "Internal", "gears_pulleys", "ring_gear_m1", "40", 6.0),
+    ("planetary", "Planetary", "gears_pulleys", "planetary_m1", "12-18-48/3", 0.0),
     ("worm_drives", "Worm", "gears_pulleys", "worm_m1", "1", 10.0),
     ("timing_pulleys", "Pulleys", "gears_pulleys", "pulley_gt2", "20", 6.0),
 ];
@@ -203,7 +300,11 @@ fn category(family: &str) -> &'static str {
         "dowel_pin" => "pins",
         "bearing" => "bearings",
         f if f.starts_with("pulley_") => "timing_pulleys",
+        f if f.starts_with("bevel_pair_") => "bevel",
+        f if f.starts_with("worm_pair_") => "worm_drives",
+        f if f.starts_with("planetary_") => "planetary",
         f => match gear_family(f).map(|g| g.0) {
+            Some(GearKind::Bevel) => "bevel",
             Some(GearKind::Spur) => "spur_gears",
             Some(GearKind::Helical) => "helical_gears",
             Some(GearKind::Herringbone) => "herringbone_gears",
@@ -216,7 +317,7 @@ fn category(family: &str) -> &'static str {
 
 /// Gears, discs and pulleys (the Insert Gear / Pulley dialog), as against fasteners.
 fn is_drive(family: &str) -> bool {
-    gear_family(family).is_some() || family.starts_with("pulley_")
+    gear_family(family).is_some() || set_family(family).is_some() || family.starts_with("pulley_")
 }
 
 /// The options a family takes besides size and length (the dialog shows a field for each).
@@ -224,8 +325,11 @@ fn options(family: &str) -> Vec<&'static str> {
     match gear_family(family).map(|g| g.0) {
         Some(GearKind::Ring) => vec![],
         Some(GearKind::Spur) => vec!["bore", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet", "offset_hole"],
-        Some(GearKind::Helical | GearKind::Herringbone) => vec!["bore", "helix_angle", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet"],
+        Some(GearKind::Helical | GearKind::Herringbone) => {
+            vec!["bore", "helix_angle", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet"]
+        }
         Some(GearKind::WormWheel) => vec!["bore", "starts"],
+        Some(GearKind::Bevel) => vec!["bore"],
         Some(_) => vec!["bore"],
         None if is_drive(family) => vec!["bore"],
         None => {
@@ -247,6 +351,7 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     let Some(b) = bore else { return Ok(sh) };
     let root = match &sh {
         Shape::Gear { tooth, z, .. } => tooth.root_radius(*z),
+        Shape::Bevel { tooth, z, cone, b, .. } => bevel_hub(*tooth, *z, *cone, *b) / 2.0,
         Shape::Worm { m, d1, .. } => d1 / 2.0 - 1.25 * m,
         Shape::Pulley { p, pld, depth, z, .. } => f64::from(*z) * p / std::f64::consts::PI / 2.0 - pld - depth,
         Shape::RingGear { .. } => return Err("a ring gear has no bore".into()),
@@ -258,6 +363,7 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     Ok(match sh {
         Shape::Gear { tooth, z, w, helix, herringbone, round, offset, .. } => Shape::Gear { tooth, z, w, bore: b, helix, herringbone, round, offset },
         Shape::Worm { m, d1, starts, len, .. } => Shape::Worm { m, d1, starts, len, bore: b },
+        Shape::Bevel { tooth, z, delta, cone, b: w, .. } => Shape::Bevel { tooth, z, delta, cone, b: w, bore: b },
         Shape::Pulley { p, pld, depth, rg, z, w, flange, .. } => Shape::Pulley { p, pld, depth, rg, z, w, flange, bore: b },
         other => other,
     })
@@ -794,6 +900,12 @@ enum Shape {
     /// teeth's root and tip fillets, `offset` a second hole (its centre's distance from the axis
     /// on −x, its diameter).
     Gear { tooth: Involute, z: u32, w: f64, bore: f64, helix: f64, herringbone: bool, round: Rounding, offset: Option<(f64, f64)> },
+    /// A straight bevel gear: `z` teeth of `tooth` (the large end's transverse section, Tredgold's
+    /// back-cone tooth carried to the plane of its pitch circle) swept up z by b·cos δ while shrinking
+    /// towards the pitch cone's apex (on the axis at r_pitch / tan δ), `delta` the pitch cone
+    /// angle, `cone` the cone distance, `b` the face width along it; a hub behind the large end,
+    /// a bore through.
+    Bevel { tooth: BevelTooth, z: u32, delta: f64, cone: f64, b: f64, bore: f64 },
     /// An internal ring gear: `z` teeth pointing in, cut from a cylinder of outside diameter
     /// `od` by the outline of their spaces (`space`: addendum and dedendum swapped), z 0…w.
     RingGear { space: Involute, z: u32, w: f64, od: f64 },
@@ -923,6 +1035,63 @@ impl Involute {
     }
 }
 
+/// A straight bevel gear's teeth at its large end, by Tredgold's approximation: a 20° ISO 53
+/// rack's teeth (addendum m, dedendum 1.25 m) on the back cone, as on a spur gear of z / cos δ
+/// teeth and radius r_pitch / cos δ, carried along the lines to the apex onto the plane of the
+/// pitch circle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BevelTooth {
+    m: f64,
+    delta: f64,
+}
+
+impl BevelTooth {
+    fn pitch_radius(&self, z: u32) -> f64 {
+        self.m * f64::from(z) / 2.0
+    }
+
+    /// The apex's distance from the large end (along the axis).
+    fn apex(&self, z: u32) -> f64 {
+        self.pitch_radius(z) / self.delta.tan()
+    }
+
+    /// Where a point `d` out from the pitch cone along the back cone lands: on the back cone at
+    /// radius r_pitch + d·cos δ, d·sin δ nearer the apex, and carried to the pitch circle's plane.
+    fn radius(&self, z: u32, d: f64) -> f64 {
+        let (rp, a) = (self.pitch_radius(z), self.apex(z));
+        (rp + d * self.delta.cos()) * a / (a - d * self.delta.sin())
+    }
+
+    fn tip_radius(&self, z: u32) -> f64 {
+        self.radius(z, self.m)
+    }
+
+    fn root_radius(&self, z: u32) -> f64 {
+        self.radius(z, -1.25 * self.m)
+    }
+
+    /// The large end's outline: the back cone's spur gear tooth by tooth, each point at its
+    /// radius (`radius`) and at its angle / cos δ (the back cone unrolled is that gear).
+    fn outline(&self, z: u32) -> std::result::Result<Vec<Seg>, String> {
+        let (rp, a, c, sn) = (self.pitch_radius(z), self.apex(z), self.delta.cos(), self.delta.sin());
+        let (rv, zv, pa) = (rp / c, f64::from(z) / c, 20f64.to_radians());
+        let rbv = rv * pa.cos();
+        // Back from a radius in the plane to the distance off the pitch cone.
+        let off = |r: f64| a * (r - rp) / (a * c + r * sn);
+        let psi = |r: f64| {
+            let rho = rv + off(r);
+            (std::f64::consts::PI / (2.0 * zv) + inv(pa) - inv((rbv / rho).min(1.0).acos())) / c
+        };
+        toothed_outline(z, self.root_radius(z), self.tip_radius(z), self.radius(z, rbv - rv), &psi, Flanks::Arcs, Rounding::default())
+            .map_err(|e| format!("{z} bevel teeth of module {}: {e}", self.m))
+    }
+}
+
+/// A bevel gear's hub diameter: within its small end's root circle.
+fn bevel_hub(tooth: BevelTooth, z: u32, cone: f64, b: f64) -> f64 {
+    2.0 * 0.85 * tooth.root_radius(z) * (cone - b) / cone
+}
+
 /// The default width of a gear of module `m` (about six modules).
 fn gear_width(m: f64) -> f64 {
     GEAR_WIDTHS.iter().copied().find(|w| *w >= 6.0 * m).unwrap_or(30.0)
@@ -952,6 +1121,24 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
             ));
         }
         return Ok(Shape::Worm { m, d1, starts, len, bore: bore_for(d1 / 2.0 - 1.25 * m) });
+    }
+    if kind == GearKind::Bevel {
+        tooth_options(kind, m, 0.0, &extra)?;
+        let (z, mate) = pair(size)
+            .filter(|(a, b)| (6..=200).contains(a) && (6..=200).contains(b))
+            .ok_or_else(|| format!("no bevel gear `{size}` (its teeth and its mate's: \"20:40\")"))?;
+        let delta = f64::from(z).atan2(f64::from(mate));
+        let rp = m * f64::from(z) / 2.0;
+        let cone = rp / delta.sin();
+        // A third of the cone distance, at most ten modules, to the half millimetre below.
+        let b = length.unwrap_or_else(|| ((cone / 3.0).min(10.0 * m) * 2.0).floor() / 2.0);
+        if !(b > 0.0 && b <= cone / 2.0) {
+            return Err(format!("a bevel gear's face width is at most half its cone distance ({:.1} mm)", cone / 2.0));
+        }
+        let tooth = BevelTooth { m, delta };
+        tooth.outline(z)?;
+        let bore = bore_for(bevel_hub(tooth, z, cone, b) / 2.0);
+        return Ok(Shape::Bevel { tooth, z, delta, cone, b, bore });
     }
     let z = teeth(size).ok_or_else(|| format!("no tooth count `{size}` (6…200)"))?;
     let w = length.unwrap_or_else(|| gear_width(m));
@@ -1361,7 +1548,8 @@ fn worm_outline(m: f64, d1: f64, starts: u32) -> std::result::Result<Vec<Seg>, S
     let rp = d1 / 2.0;
     let lead = std::f64::consts::PI * m * f64::from(starts);
     let psi = |r: f64| std::f64::consts::PI * (std::f64::consts::PI * m / 2.0 - 2.0 * (r - rp) * 20f64.to_radians().tan()) / lead;
-    toothed_outline(starts, rp - 1.25 * m, rp + m, 0.0, &psi, Flanks::Arcs, Rounding::default()).map_err(|e| format!("a {starts}-start worm of module {m}: {e}"))
+    toothed_outline(starts, rp - 1.25 * m, rp + m, 0.0, &psi, Flanks::Arcs, Rounding::default())
+        .map_err(|e| format!("a {starts}-start worm of module {m}: {e}"))
 }
 
 /// How a tooth's flank is drawn: a fit spline through its points, or two circular arcs through
@@ -1679,6 +1867,13 @@ fn outline_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64,
 /// afterwards: a boolean against the twisted faces costs many times the sweep.
 #[allow(clippy::too_many_arguments)]
 fn twisted_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z0: f64, h: f64, twist: f64, op: &str) -> Result<()> {
+    swept_solid(s, segs, circles, material, z0, h, twist, 1.0, op)
+}
+
+/// `twisted_solid` that also shrinks the outline linearly to `scale` at the top (a bevel gear's
+/// teeth converging on the apex).
+#[allow(clippy::too_many_arguments)]
+fn swept_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z0: f64, h: f64, twist: f64, scale: f64, op: &str) -> Result<()> {
     let sketch = outline_sketch(s, segs, circles, z0)?;
     let path = run(s, "sketch.create", json!({"plane": "XZ"}))?["sketch"].clone();
     // The XZ sketch's y runs down world z.
@@ -1689,7 +1884,7 @@ fn twisted_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64,
         s,
         "solid.sweep",
         json!({"sketch": sketch, "profiles": profiles(circles, material), "path_sketch": path, "path": ["axis"],
-               "twist": format!("{} deg", twist.to_degrees()), "operation": op}),
+               "twist": format!("{} deg", twist.to_degrees()), "scale": scale, "operation": op}),
     )?;
     Ok(())
 }
@@ -1799,6 +1994,15 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
                 twisted_solid(s, &segs, &[axial(bore)], mat, 0.0, w, rate * w, "new")?;
             }
         }
+        Shape::Bevel { tooth, z, delta, cone, b, bore } => {
+            let segs = tooth.outline(z).map_err(EngineError::Other)?;
+            let h = b * delta.cos();
+            swept_solid(s, &segs, &[], 0.0, 0.0, h, 0.0, (cone - b) / cone, "new")?;
+            // The hub behind the large end, then the bore through both (the swept teeth shrink, so
+            // the bore is cut, not drawn in the outline).
+            cyl(s, bevel_hub(tooth, z, cone, b), -0.4 * b, 0.0, "join")?;
+            cyl(s, bore, -0.4 * b - 1.0, h + 1.0, "cut")?;
+        }
         Shape::RingGear { space, z, w, od } => {
             let segs = gear_outline(space, z, Flanks::Spline, Rounding::default()).map_err(EngineError::Other)?;
             // Between the tooth spaces' roots and the outside.
@@ -1847,7 +2051,7 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
             f if !screw_drives(f).is_empty() => screw_sizes(f),
             "dowel_pin" => DOWEL.iter().map(|d| json!({"size": format!("{d}"), "d": d})).collect(),
             "bearing" => BEARINGS.iter().map(|r| json!({"size": r.0, "series": r.0.get(..2).unwrap_or(""), "bore": r.1, "outer": r.2, "width": r.3})).collect(),
-            f if gear_family(f).is_some() => drive_sizes(f),
+            f if gear_family(f).is_some() || set_family(f).is_some() => drive_sizes(f),
             f if f.starts_with("pulley_") => match PULLEYS.iter().find(|r| r.0 == f) {
                 Some(&(_, p, pld, depth, ..)) => PULLEY_TEETH
                     .iter()
@@ -1862,7 +2066,11 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
             _ => Vec::new(),
         };
         let (_, name, standard) = FAMILIES.iter().find(|f| f.0 == id).copied().unwrap_or(("", "", ""));
-        let lengths = if let Some((kind, _)) = gear_family(id) {
+        let lengths = if set_family(id).is_some_and(|(k, _)| k == SetKind::Worm) {
+            Some(WORM_LENGTHS.to_vec())
+        } else if set_family(id).is_some() {
+            Some(GEAR_WIDTHS.to_vec())
+        } else if let Some((kind, _)) = gear_family(id) {
             Some(if kind == GearKind::Worm { WORM_LENGTHS.to_vec() } else { GEAR_WIDTHS.to_vec() })
         } else if let Some(r) = PULLEYS.iter().find(|r| r.0 == id) {
             Some(r.6.to_vec())
@@ -1873,7 +2081,7 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
         let drives: Vec<Value> =
             screw_drives(id).iter().filter_map(|d| DRIVES.iter().find(|x| x.0 == *d)).map(|(d, n)| json!({"drive": d, "name": n})).collect();
         json!({"family": id, "name": name, "standard": standard, "group": group, "category": category(id), "sizes": sizes, "lengths": lengths,
-               "options": options(id), "drives": drives})
+               "options": options(id), "drives": drives, "member": id.starts_with("bevel_gear_")})
     };
     match str_(p, "family") {
         Some(f) if FAMILIES.iter().any(|x| x.0 == f) => Ok(fam(f)),
@@ -1902,7 +2110,23 @@ fn r3(x: f64) -> f64 {
 /// The library rows of a gear family, each size's dimensions (mm; angles in
 /// degrees; helical gears at the default helix angle, worm wheels for a one-start worm).
 fn drive_sizes(family: &str) -> Vec<Value> {
+    if let Some((kind, m)) = set_family(family) {
+        return set_sizes(kind, m);
+    }
     let Some((kind, m)) = gear_family(family) else { return Vec::new() };
+    if kind == GearKind::Bevel {
+        let mut pairs: Vec<(u32, u32)> = BEVEL_PAIRS.iter().flat_map(|(a, b)| [(*a, *b), (*b, *a)]).collect();
+        pairs.dedup();
+        return pairs
+            .iter()
+            .filter_map(|(z, mate)| match gear_shape(kind, m, &format!("{z}:{mate}"), None, Extra::default()) {
+                Ok(Shape::Bevel { tooth, z, delta, b, bore, .. }) => Some(json!({"size": format!("{z}:{mate}"), "teeth": z, "mate": mate,
+                    "pitch_diameter": r3(2.0 * tooth.pitch_radius(z)), "outside_diameter": r3(2.0 * tooth.tip_radius(z)),
+                    "cone_angle": r3(delta.to_degrees()), "face_width": b, "bore": bore})),
+                _ => None,
+            })
+            .collect();
+    }
     let teeth: &[u32] = match kind {
         GearKind::Ring => &RING_TEETH,
         GearKind::WormWheel => &WHEEL_TEETH,
@@ -1976,6 +2200,153 @@ fn screw_sizes(family: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The library rows of a set family: each set's teeth, ratio and spacing (mm).
+fn set_sizes(kind: SetKind, m: f64) -> Vec<Value> {
+    match kind {
+        SetKind::Bevel => BEVEL_PAIRS
+            .iter()
+            .map(|(a, b)| {
+                json!({"size": format!("{a}:{b}"), "pinion": a, "gear": b, "ratio": r3(f64::from(*b) / f64::from(*a)),
+                       "cone_distance": r3(m / 2.0 * f64::from(*a).hypot(f64::from(*b)))})
+            })
+            .collect(),
+        SetKind::Worm => WORM_PAIRS
+            .iter()
+            .map(|(n, z)| {
+                json!({"size": format!("{n}:{z}"), "starts": n, "wheel": z, "ratio": z / n,
+                       "center_distance": r3((worm_d1(m) + m * f64::from(*z)) / 2.0)})
+            })
+            .collect(),
+        SetKind::Planetary => planetary_sets()
+            .iter()
+            .map(|&(zs, zp, zr, n)| {
+                let ratio = 1.0 + f64::from(zr) / f64::from(zs);
+                json!({"size": format!("{zs}-{zp}-{zr}/{n}"), "label": format!("i={ratio:.2} · {zs}/{zp}/{zr} · {n} planets"),
+                       "sun": zs, "planet": zp, "ring": zr, "planets": n, "ratio": r3(ratio),
+                       "center_distance": r3(m * f64::from(zs + zp) / 2.0)})
+            })
+            .collect(),
+    }
+}
+
+/// A placement: +z along `dir` (turned `spin` about it first), the origin at `at`.
+fn placement(at: Vec3, dir: Vec3, spin: f64) -> solidcraft_doc::Mat {
+    let align =
+        solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Z.cross(dir).normalized().unwrap_or(Vec3::X), Vec3::Z.dot(dir).clamp(-1.0, 1.0).acos());
+    let mut m = solidcraft_doc::mat_mul(&align, &solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Z, spin));
+    m[3] = [at.x, at.y, at.z, 1.0];
+    m
+}
+
+/// The parts of a set, each (insert parameters, placement in the set's frame), turned so their
+/// teeth mesh: a tooth of one where the other has a gap, on the line between their centres.
+fn set_members(kind: SetKind, m: f64, size: &str, length: Option<f64>) -> std::result::Result<Vec<(Value, solidcraft_doc::Mat)>, String> {
+    use std::f64::consts::PI;
+    let suffix = MODULES.iter().find(|x| x.1 == m).map_or("m1", |x| x.0);
+    let with_len = |mut p: Value| {
+        if let Some(l) = length {
+            p["length"] = json!(l);
+        }
+        p
+    };
+    Ok(match kind {
+        SetKind::Bevel => {
+            let (z1, z2) = pair(size).ok_or_else(|| format!("no bevel pair `{size}` (\"20:40\")"))?;
+            let (rp1, rp2) = (m * f64::from(z1) / 2.0, m * f64::from(z2) / 2.0);
+            // The pinion along z, the gear along −x, their pitch cones sharing the apex (0, 0, rp2)
+            // and touching at (rp1, 0, 0), where the gear (seen from its own axis, at its angle π)
+            // turns a gap.
+            vec![
+                (with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": format!("{z1}:{z2}")})), placement(Vec3::ZERO, Vec3::Z, 0.0)),
+                (
+                    with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": format!("{z2}:{z1}")})),
+                    placement(Vec3::new(rp1, 0.0, rp2), Vec3::X * -1.0, PI - PI / f64::from(z2)),
+                ),
+            ]
+        }
+        SetKind::Worm => {
+            let (n, z) = pair(size).ok_or_else(|| format!("no worm drive `{size}` (starts:teeth, \"1:30\")"))?;
+            let wheel = json!({"family": format!("worm_wheel_{suffix}"), "size": z.to_string(), "starts": n});
+            let Shape::Gear { tooth, w, helix, .. } =
+                gear_shape(GearKind::WormWheel, m, &z.to_string(), None, Extra { starts: Some(n), ..Extra::default() })?
+            else {
+                return Err("worm wheel".into());
+            };
+            let worm = with_len(json!({"family": format!("worm_{suffix}"), "size": n.to_string()}));
+            let Shape::Worm { d1, len, .. } = gear_shape(GearKind::Worm, m, &n.to_string(), length, Extra::default())? else {
+                return Err("worm".into());
+            };
+            let a = (d1 + m * f64::from(z)) / 2.0;
+            let lead = PI * m * f64::from(n);
+            let rate = helix.tan() / tooth.pitch_radius(z);
+            // The wheel along z, a gap towards the worm (−y) at mid-width; the worm along x at
+            // mid-width, a = (d1 + d2) / 2 off, its thread's tooth towards the wheel there.
+            vec![
+                (wheel, placement(Vec3::ZERO, Vec3::Z, -PI / 2.0 - rate * w / 2.0 - PI / f64::from(z))),
+                (worm, placement(Vec3::new(-len / 2.0, -a, w / 2.0), Vec3::X, PI / 2.0 - PI * len / lead)),
+            ]
+        }
+        SetKind::Planetary => {
+            let (zs, zp, zr, n) = planetary(size).ok_or_else(|| format!("no planetary set `{size}` (sun-planet-ring/planets, \"12-18-48/3\")"))?;
+            let a = m * f64::from(zs + zp) / 2.0;
+            let mut out = vec![(
+                with_len(json!({"family": format!("spur_gear_{suffix}"), "size": zs.to_string(), "name": format!("Sun m{m} z{zs}")})),
+                placement(Vec3::ZERO, Vec3::Z, 0.0),
+            )];
+            for k in 0..n {
+                let theta = 2.0 * PI * f64::from(k) / f64::from(n);
+                // A gap towards the sun where it has a tooth or a tooth where it has a gap.
+                let spin = theta + PI - theta * f64::from(zs) / f64::from(zp) - PI / f64::from(zp);
+                out.push((
+                    with_len(
+                        json!({"family": format!("spur_gear_{suffix}"), "size": zp.to_string(), "name": format!("Planet {} m{m} z{zp}", k + 1)}),
+                    ),
+                    placement(Vec3::new(a * theta.cos(), a * theta.sin(), 0.0), Vec3::Z, spin),
+                ));
+            }
+            // The ring turned to the first planet; (sun + ring) / planets whole, so to them all.
+            out.push((
+                with_len(json!({"family": format!("ring_gear_{suffix}"), "size": zr.to_string(), "name": format!("Ring m{m} z{zr}")})),
+                placement(Vec3::ZERO, Vec3::Z, PI * f64::from(zp - 1) / f64::from(zr)),
+            ));
+            out
+        }
+    })
+}
+
+/// Insert a set: each part as its own component, placed and turned to mesh, the set placed at
+/// `point` with its +z along `direction`.
+fn insert_set(s: &mut Session, p: &Value, kind: SetKind, m: f64, size: &str) -> Result<Value> {
+    let cmd = "parts.insert (set)";
+    if p.get("at").is_some() {
+        return Err(bad(cmd, "a set is placed at a `point`, not seated in a hole"));
+    }
+    let members = set_members(kind, m, size, length_param(p, cmd)?).map_err(|e| bad(cmd, e))?;
+    let at = p.get("point").and_then(vec3).unwrap_or(Vec3::ZERO);
+    let dir = p.get("direction").and_then(vec3).and_then(|d| d.normalized()).unwrap_or(Vec3::Z);
+    let frame = placement(at, dir, 0.0);
+    let prefix = str_(p, "name").map(str::to_string);
+    let (mut components, mut occurrences, mut names) = (Vec::new(), Vec::new(), Vec::new());
+    for (mut q, local) in members {
+        if let Some(pre) = &prefix {
+            let own = q["name"].as_str().map(str::to_string);
+            q["name"] = json!(match own {
+                Some(n) => format!("{pre} · {n}"),
+                None => pre.clone(),
+            });
+        }
+        let r = insert(s, &q)?;
+        let occ = r["occurrence"].as_u64().unwrap_or(0);
+        if let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == occ) {
+            o.transform = solidcraft_doc::mat_mul(&frame, &local);
+        }
+        components.push(r["component"].clone());
+        occurrences.push(r["occurrence"].clone());
+        names.push(r["name"].clone());
+    }
+    Ok(json!({"components": components, "occurrences": occurrences, "names": names, "component": components.first().cloned().unwrap_or(Value::Null)}))
+}
+
 /// A screw's drive as its id, from its shape.
 fn drive_id(sh: &Shape) -> Option<&'static str> {
     match sh {
@@ -1995,6 +2366,7 @@ fn part_name(family: &str, size: &str, sh: &Shape) -> String {
         }
         Shape::Gear { z, w, .. } | Shape::RingGear { z, w, .. } => format!("{} m{m} z{z}x{w}", label(family)),
         Shape::Worm { starts, len, .. } => format!("{} m{m} {starts}-start x{len}", label(family)),
+        Shape::Bevel { z, .. } => format!("{} m{m} z{z} ({size})", label(family)),
         Shape::Pulley { z, w, .. } => format!("{} {z}T x{w}", label(family)),
         Shape::Screw { len, .. } if screw_drives(family).len() > 1 => {
             let suffix = match drive_id(sh) {
@@ -2019,6 +2391,7 @@ fn identity(family: &str, size: &str, sh: &Shape) -> (String, String) {
         Shape::Gear { z, w, helix, .. } if *helix != 0.0 => format!("m{m} z{z} b{w} β{:.1}°", helix.to_degrees()),
         Shape::Gear { z, w, .. } | Shape::RingGear { z, w, .. } => format!("m{m} z{z} b{w}"),
         Shape::Worm { starts, len, .. } => format!("m{m} z{starts} L{len}"),
+        Shape::Bevel { b, .. } => format!("m{m} {size} b{b}"),
         Shape::Pulley { z, w, .. } => format!("{z}T {w}mm"),
         _ => size.to_string(),
     };
@@ -2099,6 +2472,7 @@ fn label(family: &str) -> &'static str {
         f if f.starts_with("herringbone_gear_") => "Herringbone Gear",
         f if f.starts_with("ring_gear_") => "Ring Gear",
         f if f.starts_with("worm_wheel_") => "Worm Wheel",
+        f if f.starts_with("bevel_gear_") => "Bevel Gear",
         f if f.starts_with("worm_") => "Worm",
         "pulley_gt2" => "GT2 Pulley",
         "pulley_htd3m" => "HTD3M Pulley",
@@ -2177,6 +2551,9 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parts.insert (Insert Fastener)";
     let family = str_(p, "family").ok_or_else(|| bad(cmd, "`family` is required (parts.library)"))?.to_string();
     let size = str_(p, "size").ok_or_else(|| bad(cmd, "`size` is required"))?.to_string();
+    if let Some((kind, m)) = set_family(&family) {
+        return insert_set(s, p, kind, m, &size);
+    }
     let bore = bore_param(p, cmd)?;
     let extra = extra_params(s, p, cmd)?;
     let sh = shape(&family, &size, length_param(p, cmd)?, extra.clone()).and_then(|sh| with_bore(sh, bore)).map_err(|e| bad(cmd, e))?;
@@ -2252,6 +2629,7 @@ fn shape_len(sh: &Shape) -> Option<f64> {
         Shape::Screw { len, .. } | Shape::Rod { len, .. } => Some(*len),
         Shape::Gear { w, .. } | Shape::RingGear { w, .. } | Shape::Pulley { w, .. } => Some(*w),
         Shape::Worm { len, .. } => Some(*len),
+        Shape::Bevel { b, .. } => Some(*b),
         _ => None,
     }
 }
@@ -2704,6 +3082,54 @@ mod tests {
                 .collect();
             assert!(radii.iter().filter(|r| (*r - 0.6).abs() < 1e-9).count() == 2 * z as usize, "z{z} root fillets");
             assert!(radii.iter().filter(|r| (*r - 0.4).abs() < 1e-9).count() == 2 * z as usize, "z{z} tip fillets");
+        }
+    }
+
+    /// The overlapping volume of the design's bodies (touching teeth overlap by nothing).
+    fn overlap(s: &mut Session) -> f64 {
+        let r = run(s, "inspect.interference", json!({}));
+        r["interferences"].as_array().map_or(0.0, |l| l.iter().filter_map(|i| i["volume_mm3"].as_f64()).sum())
+    }
+
+    /// Sets go in meshing: a bevel pair and a planetary set leave their teeth touching but not
+    /// overlapping, and a planet turned half a tooth would overlap; a worm sits across its
+    /// wheel at the centre distance. Each part is a standard part of its own.
+    #[test]
+    fn sets_go_in_meshing() {
+        let mut b = Session::default();
+        let r = run(&mut b, "parts.insert", json!({"family": "bevel_pair_m2", "size": "20:40"}));
+        assert_eq!(r["components"].as_array().map(Vec::len), Some(2), "{r}");
+        assert!(b.model.results.iter().all(|r| r.error.is_none()));
+        assert!(overlap(&mut b) < 0.05, "{}", overlap(&mut b));
+        let parts: Vec<String> = b.doc.parts.values().map(|p| p.size.clone()).collect();
+        assert!(parts.contains(&"20:40".to_string()) && parts.contains(&"40:20".to_string()), "{parts:?}");
+        let mut p = Session::default();
+        let r = run(&mut p, "parts.insert", json!({"family": "planetary_m1", "size": "12-18-48/3"}));
+        assert_eq!(r["components"].as_array().map(Vec::len), Some(5), "{r}");
+        assert!(overlap(&mut p) < 0.05, "{}", overlap(&mut p));
+        // Turn the first planet half a tooth on its axis: it runs into the sun and the ring.
+        let planet = r["occurrences"].get(1).and_then(Value::as_u64).unwrap_or(0);
+        if let Some(o) = p.doc_mut().occurrences.iter_mut().find(|o| o.id == planet) {
+            let v = solidcraft_geom::Vec3::ZERO;
+            let turn = solidcraft_doc::rigid(v, v, solidcraft_geom::Vec3::Z, std::f64::consts::PI / 18.0);
+            o.transform = solidcraft_doc::mat_mul(&o.transform, &turn);
+        }
+        p.refresh();
+        assert!(overlap(&mut p) > 1.0, "a half-tooth turn overlaps: {}", overlap(&mut p));
+        let mut w = Session::default();
+        let r = run(&mut w, "parts.insert", json!({"family": "worm_pair_m1", "size": "1:30"}));
+        assert!(w.model.results.iter().all(|r| r.error.is_none()));
+        let worm = r["occurrences"].get(1).and_then(Value::as_u64).unwrap_or(0);
+        let t = w.doc.occurrences.iter().find(|o| o.id == worm).map(|o| o.transform).unwrap_or_default();
+        // Its axis along x, (12 + 30) / 2 = 21 from the wheel's.
+        assert!((t[3][1] + 21.0).abs() < 1e-9 && (t[2][0] - 1.0).abs() < 1e-9, "{t:?}");
+        // The library's planetary sets all assemble; a set that does not is refused.
+        let l = run(&mut Session::default(), "parts.library", json!({"family": "planetary_m1"}));
+        let sizes: Vec<String> =
+            l["sizes"].as_array().map_or(Vec::new(), |a| a.iter().filter_map(|x| x["size"].as_str().map(str::to_string)).collect());
+        assert!(sizes.len() >= 8 && sizes.iter().all(|z| super::planetary(z).is_some()), "{sizes:?}");
+        for bad in ["12-18-50/3", "13-13-39/3", "12-30-72/6", "12-18-48"] {
+            assert!(Session::default().execute("parts.insert", &json!({"family": "planetary_m1", "size": bad})).is_err(), "{bad}");
         }
     }
 

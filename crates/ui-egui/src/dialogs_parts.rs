@@ -38,6 +38,8 @@ pub struct Family {
     pub options: Vec<String>,
     /// The drives a screw comes with, (id, name), the first its default.
     pub drives: Vec<(String, String)>,
+    /// One part of a set (a bevel gear of a pair): inserted with its set, not listed alone.
+    pub member: bool,
 }
 
 /// The library as `parts.library` gives it.
@@ -66,6 +68,7 @@ pub fn families(v: &Value) -> Vec<Family> {
                     .get("options")
                     .and_then(Value::as_array)
                     .map_or(Vec::new(), |a| a.iter().filter_map(|o| o.as_str().map(str::to_string)).collect()),
+                member: f.get("member").and_then(Value::as_bool).unwrap_or(false),
                 drives: f.get("drives").and_then(Value::as_array).map_or(Vec::new(), |a| {
                     a.iter().filter_map(|d| Some((d.get("drive")?.as_str()?.to_string(), d.get("name")?.as_str()?.to_string()))).collect()
                 }),
@@ -124,7 +127,7 @@ pub struct Pt {
     /// The Gear / Pulley dialog (its families only, a bore field, "Width" for the length).
     pub gears: bool,
     /// What the part is made with besides size and length.
-    pub opt: Options,
+    pub opt: Box<Options>,
     /// The series the size list shows (bearings: "62"…); empty: all.
     pub series: String,
     /// What is typed in the search field, and what it found (for `hits_for`).
@@ -143,7 +146,7 @@ impl Pt {
             lib: None,
             cats: Vec::new(),
             gears,
-            opt: Options::default(),
+            opt: Box::default(),
             series: String::new(),
             query: String::new(),
             hits: Vec::new(),
@@ -158,7 +161,12 @@ impl Pt {
         self.length = None;
         self.series.clear();
         // The tooth's options carry over between gears; what belongs to a size goes.
-        self.opt = Options { modeled: self.opt.modeled, helix: self.opt.helix.clone(), pressure_angle: self.opt.pressure_angle.clone(), ..Options::default() };
+        *self.opt = Options {
+            modeled: self.opt.modeled,
+            helix: self.opt.helix.clone(),
+            pressure_angle: self.opt.pressure_angle.clone(),
+            ..Options::default()
+        };
     }
 }
 
@@ -228,12 +236,10 @@ impl Options {
     /// field is sent as `null` (back to the default, for a rebuild); without, it is left out.
     pub fn params(&self, f: &Family, p: &mut Value, every: bool) -> Result<(), String> {
         let takes = |o: &str| f.options.iter().any(|x| x == o);
-        let mut put = |key: &str, v: Option<Value>| {
-            match v {
-                Some(v) => p[key] = v,
-                None if every => p[key] = Value::Null,
-                None => {}
-            }
+        let mut put = |key: &str, v: Option<Value>| match v {
+            Some(v) => p[key] = v,
+            None if every => p[key] = Value::Null,
+            None => {}
         };
         if takes("bore") {
             put("bore", number(&self.bore, "bore")?.map(|b| json!(b)));
@@ -254,7 +260,16 @@ impl Options {
             put("drive", f.drives.iter().any(|d| d.0 == self.drive).then(|| json!(self.drive)));
         }
         if takes("thread") {
-            put("thread", if self.modeled { Some(json!("modeled")) } else if every { Some(json!("cosmetic")) } else { None });
+            put(
+                "thread",
+                if self.modeled {
+                    Some(json!("modeled"))
+                } else if every {
+                    Some(json!("cosmetic"))
+                } else {
+                    None
+                },
+            );
         }
         if takes("pressure_angle") {
             put("pressure_angle", number(&self.pressure_angle, "pressure angle")?.map(|v| json!(v)));
@@ -336,17 +351,20 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 
 /// The families one dialog lists.
 fn of_group(lib: Vec<Family>, gears: bool) -> Vec<Family> {
-    lib.into_iter().filter(|f| (f.group == "gears_pulleys") == gears).collect()
+    lib.into_iter().filter(|f| (f.group == "gears_pulleys") == gears && !f.member).collect()
 }
 
-/// The size's name as a list shows it: teeth as z20, a worm's starts, a disc's lobes.
+/// The size's name as a list shows it: teeth as z20, a worm's starts, a pair's or a set's own.
 fn size_label(row: &Value, size: &str) -> String {
-    if row.get("teeth").is_some() {
+    if let Some(label) = row.get("label").and_then(Value::as_str) {
+        label.to_string()
+    } else if size.contains(':') {
+        // A pair's teeth ("20:40"), a worm drive's starts and teeth ("1:30").
+        size.to_string()
+    } else if row.get("teeth").is_some() {
         format!("z{size}")
     } else if row.get("starts").is_some() {
         format!("{size}-start")
-    } else if row.get("lobes").is_some() {
-        format!("{size} lobes")
     } else {
         size.to_string()
     }
@@ -679,14 +697,16 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if let Some((_, row)) = f.sizes.get(k.size)
         && let Some(o) = row.as_object()
     {
-        for (key, v) in o.iter().filter(|(key, _)| key.as_str() != "size") {
+        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label")) {
             form_row(ui, &key.replace('_', " "), |ui| {
                 crate::ui_kit::text(
                     ui,
                     &match (key.as_str(), v.as_f64()) {
                         // Counts and angles, not lengths.
-                        ("teeth" | "starts" | "lobes" | "pins" | "ratio", Some(x)) => format!("{x}"),
-                        ("helix_angle" | "lead_angle", Some(x)) => format!("{x:.1}°"),
+                        ("teeth" | "starts" | "mate" | "pinion" | "gear" | "wheel" | "sun" | "planet" | "ring" | "planets" | "ratio", Some(x)) => {
+                            format!("{x}")
+                        }
+                        ("helix_angle" | "lead_angle" | "cone_angle", Some(x)) => format!("{x:.1}°"),
                         (_, Some(x)) => crate::prefs::show_mm(app, x, 1),
                         _ => v.as_str().map_or_else(|| v.to_string(), str::to_string),
                     },
@@ -768,16 +788,16 @@ mod tests {
             {"family": "worm_wheel_m1", "name": "Worm wheel", "sizes": [{"size": "30"}], "lengths": [10], "options": ["bore", "starts"]},
             {"family": "ring_gear_m1", "name": "Ring gear", "sizes": [{"size": "60"}], "lengths": [10], "options": []},
         ]}));
-        let k = Pt { opt: Options { bore: "6".into(), helix: "-15".into(), starts: "2".into(), ..Options::default() }, ..Pt::new(true) };
+        let k = Pt { opt: Box::new(Options { bore: "6".into(), helix: "-15".into(), starts: "2".into(), ..Options::default() }), ..Pt::new(true) };
         let p = insert_params(&l, &k, None).unwrap();
         assert_eq!((p["bore"].clone(), p["helix_angle"].clone(), p.get("starts")), (json!(6.0), json!(-15.0), None));
-        let p = insert_params(&l, &Pt { opt: Options { helix: "0.3 rad".into(), ..k.opt.clone() }, ..k.clone() }, None).unwrap();
+        let p = insert_params(&l, &Pt { opt: Box::new(Options { helix: "0.3 rad".into(), ..(*k.opt).clone() }), ..k.clone() }, None).unwrap();
         assert_eq!(p["helix_angle"], "0.3 rad");
         let p = insert_params(&l, &Pt { family: 1, ..k.clone() }, None).unwrap();
         assert_eq!((p["starts"].clone(), p.get("helix_angle")), (json!(2), None));
         let p = insert_params(&l, &Pt { family: 2, ..k.clone() }, None).unwrap();
         assert!(p.get("bore").is_none() && p.get("starts").is_none(), "{p}");
-        assert!(insert_params(&l, &Pt { family: 1, opt: Options { starts: "7".into(), ..k.opt.clone() }, ..k }, None).is_err());
+        assert!(insert_params(&l, &Pt { family: 1, opt: Box::new(Options { starts: "7".into(), ..(*k.opt).clone() }), ..k }, None).is_err());
         // A screw: its drive when it has a choice, and a modelled thread.
         let l = families(&json!({"families": [
             {"family": "pan_head_screw", "name": "Pan head screw", "sizes": [{"size": "M4"}], "lengths": [10],
@@ -785,7 +805,7 @@ mod tests {
             {"family": "washer", "name": "Washer", "sizes": [{"size": "M4"}], "options": []},
         ]}));
         assert_eq!(l.first().map(|f| f.drives.len()), Some(2));
-        let k = Pt { opt: Options { drive: "hexalobular".into(), modeled: true, ..Options::default() }, ..Pt::new(false) };
+        let k = Pt { opt: Box::new(Options { drive: "hexalobular".into(), modeled: true, ..Options::default() }), ..Pt::new(false) };
         let p = insert_params(&l, &k, None).unwrap();
         assert_eq!((p["drive"].clone(), p["thread"].clone()), (json!("hexalobular"), json!("modeled")));
         let p = insert_params(&l, &Pt { family: 1, ..k }, None).unwrap();

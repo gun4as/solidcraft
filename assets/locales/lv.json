@@ -152,7 +152,6 @@
   "Custom": "Pielāgots",
   "Customize Toolbar": "Pielāgot rīkjoslu",
   "Customize…": "Pielāgot…",
-  "Cycloidal": "Cikloīdie",
   "Cylindrical face": "Cilindriska skaldne",
   "Delete": "Dzēst",
   "Delete Selected Features…": "Dzēst atlasītās operācijas…",
@@ -3150,5 +3149,14 @@
   "update.update_now": "Atjaunināt tagad",
   "update.you_have": "Jums ir {version}.",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ izvēlēties · Enter / Tab pabeigt · Esc aizvērt",
-  "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ izvēlēties · Enter lieto ierakstīto · Esc aizvērt"
+  "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ izvēlēties · Enter lieto ierakstīto · Esc aizvērt",
+  "Bevel": "Konusa",
+  "Planetary": "Planetārie",
+  "Pressure angle": "Spiediena leņķis",
+  "Profile shift": "Profila nobīde",
+  "Backlash": "Brīvkustība",
+  "Root fillet": "Pēdas noapaļojums",
+  "Tip fillet": "Virsotnes noapaļojums",
+  "Offset hole at": "Nobīdītā atvere",
+  "Offset hole Ø": "Nobīdītās atveres Ø"
 }

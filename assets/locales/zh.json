@@ -152,7 +152,6 @@
   "Custom": "自定义",
   "Customize Toolbar": "自定义工具栏",
   "Customize…": "自定义…",
-  "Cycloidal": "摆线盘",
   "Cylindrical face": "圆柱面",
   "Delete": "删除",
   "Delete Selected Features…": "删除所选特征…",
@@ -3150,5 +3149,14 @@
   "update.update_now": "立即更新",
   "update.you_have": "当前版本为 {version}。",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ 选择 · Enter / Tab 补全 · Esc 关闭",
-  "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ 选择 · Enter 按原样应用 · Esc 关闭"
+  "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ 选择 · Enter 按原样应用 · Esc 关闭",
+  "Bevel": "锥齿轮",
+  "Planetary": "行星齿轮",
+  "Pressure angle": "压力角",
+  "Profile shift": "变位系数",
+  "Backlash": "侧隙",
+  "Root fillet": "齿根圆角",
+  "Tip fillet": "齿顶圆角",
+  "Offset hole at": "偏心孔位置",
+  "Offset hole Ø": "偏心孔直径"
 }

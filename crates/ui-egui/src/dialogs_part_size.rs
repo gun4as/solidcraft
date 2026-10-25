@@ -43,8 +43,8 @@ pub struct Resize {
     pub size: usize,
     pub length: Option<f64>,
     /// The family's options, as the part was made and as edited.
-    pub opt: Options,
-    original_opt: Options,
+    pub opt: Box<Options>,
+    original_opt: Box<Options>,
     original_size: usize,
     family: Family,
     source: Arc<Document>,
@@ -128,7 +128,7 @@ impl Resize {
             "bearing" => s == part.size.trim(),
             _ => s.eq_ignore_ascii_case(&part.size),
         })?;
-        let opt = Options::of_part(part);
+        let opt = Box::new(Options::of_part(part));
         Some(Self {
             component,
             size,
