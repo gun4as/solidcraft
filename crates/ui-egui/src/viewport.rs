@@ -1020,6 +1020,27 @@ pub(crate) fn build_scene(app: &SolveApp) -> GpuScene {
     if app.ui.ground_shadow && app.ui.visual_style != 2 && app.cam.pitch > 0.0 {
         ground_shadow(&mut sc, app, &st);
     }
+    // Cosmetic threads on the shown bodies (the headless scene draws the same lines).
+    let thread_col = if shaded {
+        let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+        rgba(solidcraft_engine::view::thread_color(rgb(tk.body_edge), rgb(tk.body)))
+    } else {
+        c4(tk.text.gamma_multiply(0.6))
+    };
+    for t in &st.threads {
+        let Some(b) = st.body(&t.body).filter(|b| app.session.body_visible(&b.name) && !app.preview.effective_replaced().contains(&b.name)) else {
+            continue;
+        };
+        let mesh = b.mesh();
+        let Some(lines) = solidcraft_engine::view::thread_lines(t, solidcraft_engine::view::thread_face_radius(t, &mesh), b.display_tol()) else {
+            continue;
+        };
+        for (pts, width) in std::iter::once((&lines.helix, 1.0)).chain(lines.ends.iter().map(|e| (e, 0.8))) {
+            for w in pts.windows(2) {
+                sc.line(w[0].to_f32(), w[1].to_f32(), thread_col, width, false);
+            }
+        }
+    }
     // Section: the outline of each body where the plane cuts it.
     if let Some((o, n)) = section_plane(app) {
         let col = c4(tk.text.gamma_multiply(0.9));
