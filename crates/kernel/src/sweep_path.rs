@@ -483,14 +483,27 @@ fn swept_volume(plane: &Plane, area: f64, st: &[Station], tangents: &[Vec3]) -> 
 }
 
 /// The stations of a smooth sweep: as many as the path has points (4…[`MAX_SMOOTH_STATIONS`]),
-/// more when the profile twists or scales.
-fn smooth_count(points: usize, ctl: &SweepControl) -> usize {
-    let n = points.saturating_sub(1).clamp(4, MAX_SMOOTH_STATIONS);
-    if !ctl.varies() {
+/// more when the profile twists or scales. Along a straight path a profile that only scales
+/// needs no more: each of its points runs on a straight line, evenly, which the walls through
+/// evenly spaced stations already are (and lighter walls keep booleans on them quick).
+fn smooth_count(pts: &[Vec3], ctl: &SweepControl) -> usize {
+    let n = pts.len().saturating_sub(1).clamp(4, MAX_SMOOTH_STATIONS);
+    if !ctl.varies() || (ctl.twist == 0.0 && ctl.rails.is_empty() && straight(pts)) {
         return n;
     }
     let twist = (ctl.twist.abs() / SMOOTH_TWIST_STEP).ceil() as usize;
     n.max(MIN_CONTROLLED_STATIONS).max(twist).min(MAX_CONTROLLED_STATIONS)
+}
+
+/// Whether the path's points all lie on the line through its ends (within 1e-9 of its length).
+fn straight(pts: &[Vec3]) -> bool {
+    let (Some(a), Some(b)) = (pts.first(), pts.last()) else { return false };
+    let len = a.dist(*b);
+    if len <= 1e-12 {
+        return false;
+    }
+    let dir = (*b - *a) * (1.0 / len);
+    pts.iter().all(|p| (*p - *a).cross(dir).len() <= 1e-9 * len)
 }
 
 /// The path with points added along its straight runs (its corners kept) when the profile
@@ -538,7 +551,7 @@ pub fn sweep_path_with(plane: &Plane, region: &Region2, path: &[Vec3], ctl: &Swe
     if !corner && !(closed_path(&pts) && !region.holes.is_empty()) {
         // Smooth: evenly spaced stations, tangents from neighbours.
         let len: f64 = pts.windows(2).map(|w| w[0].dist(w[1])).sum();
-        let n = smooth_count(pts.len(), ctl);
+        let n = smooth_count(&pts, ctl);
         let sp = resample(&pts, n);
         let tangents = central_tangents(&sp)?;
         let (st, expected) = if ctl.is_default() {
@@ -676,7 +689,7 @@ pub(crate) fn smooth_sheet(plane: &Plane, chains: &[Vec<Seg2>], path: &[Vec3], c
     if chains.iter().map(Vec::len).sum::<usize>() > 4096 {
         return Err(fail("too many curves for a smooth sweep"));
     }
-    let n = smooth_count(pts.len(), ctl);
+    let n = smooth_count(&pts, ctl);
     let sp = resample(&pts, n);
     let tangents = central_tangents(&sp)?;
     let st = if ctl.is_default() { stations(&sp, &tangents, &[])? } else { controlled_stations(plane, &sp, &tangents, &[], ctl)? };

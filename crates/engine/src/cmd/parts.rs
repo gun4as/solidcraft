@@ -1078,22 +1078,6 @@ impl BevelTooth {
     /// The large end's outline: the back cone's spur gear tooth by tooth, each point at its
     /// radius (`radius`) and at its angle / cos δ (the back cone unrolled is that gear).
     fn outline(&self, z: u32) -> std::result::Result<Vec<Seg>, String> {
-        self.outline_to(z, self.tip_radius(z))
-    }
-
-    /// The back cone's base circle, below which the flanks run radially.
-    fn base_offset(&self, z: u32) -> f64 {
-        let rv = self.pitch_radius(z) / self.delta.cos();
-        rv * 20f64.to_radians().cos() - rv
-    }
-
-    /// Where the involute flanks start: the base circle, or the root circle above it.
-    fn foot_radius(&self, z: u32) -> f64 {
-        self.radius(z, self.base_offset(z)).max(self.root_radius(z))
-    }
-
-    /// `outline` with its teeth's tips cut back to radius `tip`.
-    fn outline_to(&self, z: u32, tip: f64) -> std::result::Result<Vec<Seg>, String> {
         let (rp, a, c, sn) = (self.pitch_radius(z), self.apex(z), self.delta.cos(), self.delta.sin());
         let (rv, zv, pa) = (rp / c, f64::from(z) / c, 20f64.to_radians());
         let rbv = rv * pa.cos();
@@ -1103,7 +1087,7 @@ impl BevelTooth {
             let rho = rv + off(r);
             (std::f64::consts::PI / (2.0 * zv) + inv(pa) - inv((rbv / rho).min(1.0).acos())) / c
         };
-        toothed_outline(z, self.root_radius(z), tip, self.radius(z, rbv - rv), &psi, Flanks::Arcs, Rounding::default())
+        toothed_outline(z, self.root_radius(z), self.tip_radius(z), self.radius(z, rbv - rv), &psi, Flanks::Arcs, Rounding::default())
             .map_err(|e| format!("{z} bevel teeth of module {}: {e}", self.m))
     }
 }
@@ -1927,19 +1911,6 @@ fn swept_solid(s: &mut Session, segs: &[Seg], circles: &[Hole], material: f64, z
     Ok(())
 }
 
-/// A loft through outlines with matching segments, each in an XY sketch at its height.
-fn lofted(s: &mut Session, sections: &[(Vec<Seg>, f64)], op: &str) -> Result<()> {
-    let mut sketches = Vec::new();
-    for (segs, z0) in sections {
-        sketches.push(outline_sketch(s, segs, &[], *z0)?);
-    }
-    let list: Vec<Value> = sketches.iter().map(|k| json!({"sketch": k})).collect();
-    run(s, "solid.loft", json!({"sections": list, "operation": op}))?;
-    let items: Vec<String> = sketches.iter().filter_map(Value::as_u64).map(|id| id.to_string()).collect();
-    run(s, "browser.visibility", json!({"visible": false, "items": items}))?;
-    Ok(())
-}
-
 /// Build a part in the active component.
 fn build(s: &mut Session, sh: &Shape) -> Result<()> {
     let _frame = crate::frames::local_geometry();
@@ -2046,38 +2017,35 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
             }
         }
         Shape::Bevel { tooth, z, delta, cone, b, bore } => {
-            // The large end lies on the back cone (square to the pitch cone through the pitch
-            // circle at z 0), the small end on the small end's pitch plane (z h). A cut through the
-            // teeth is slow and fragile in the kernel, so none is made: the teeth are lofted through
-            // sections of the large end's outline carried towards the apex, each to its height, the
-            // low ones' tips taken back to the back cone.
+            // The teeth end on the back cone (square to the pitch cone through the pitch circle at
+            // z 0): swept towards the apex from a plane behind its roots to the small end's pitch
+            // plane (z h), then cut along it. Behind them the flat back (a mate's tips reach the
+            // back cone, z −m sin δ at most, so they stay in front of it) and the hub.
             let (m, a, rp, (sn, c)) = (tooth.m, tooth.apex(z), tooth.pitch_radius(z), delta.sin_cos());
             let h = b * c;
-            let top = m * sn;
-            if top >= 0.8 * h {
-                return Err(EngineError::Other(format!("a bevel gear this narrow has no room for its teeth: at least {:.1} mm wide", top / 0.8 / c)));
+            // The sweep starts past the roots and the cut inside them (t −1.5 modules along the
+            // back cone), so no edge of the teeth lies on the cut.
+            let z0 = -1.6 * m * sn - 0.2;
+            if m * sn >= 0.8 * h {
+                return Err(EngineError::Other(format!(
+                    "a bevel gear this narrow has no room for its teeth: at least {:.1} mm wide",
+                    m * sn / 0.8 / c
+                )));
             }
-            // The back cone's radius at height t, carried to the large end's plane.
-            let back = |t: f64| (rp + t * c / sn) * a / (a - t);
-            let (foot, tip) = (tooth.foot_radius(z), tooth.tip_radius(z));
-            // The lowest section: its teeth a fifth of their flanks high.
-            let (mut lo, mut hi) = (-1.25 * m * sn, top);
-            for _ in 0..60 {
-                let mid = (lo + hi) / 2.0;
-                if back(mid) < foot + 0.2 * (tip - foot) { lo = mid } else { hi = mid }
-            }
-            let t0 = hi;
-            let section = |t: f64| tooth.outline_to(z, back(t).min(tip)).map(|segs| (scaled(&segs, (a - t) / a), t)).map_err(EngineError::Other);
-            // Two lofts, as the tips' edge turns where the back cone meets the tip cone: the teeth
-            // from there to the small end (ruled, as exact as the outline), and below it the back
-            // cone's sections (smooth through them).
-            lofted(s, &[section(top)?, section(h)?], "new")?;
-            let thirds = [t0, t0 + (top - t0) / 3.0, t0 + 2.0 * (top - t0) / 3.0, top];
-            lofted(s, &thirds.iter().map(|t| section(*t)).collect::<Result<Vec<_>>>()?, "join")?;
-            // The hub behind the large end, then the bore through both (the teeth shrink, so the
-            // bore is cut, not drawn in the outlines).
-            cyl(s, bevel_hub(tooth, z, cone, b), t0 - b, t0, "join")?;
-            cyl(s, bore, t0 - b - 1.0, h + 1.0, "cut")?;
+            let segs = scaled(&tooth.outline(z).map_err(EngineError::Other)?, (a - z0) / a);
+            swept_solid(s, &segs, &[], 0.0, z0, h - z0, 0.0, (a - h) / (a - z0), "new")?;
+            // A point `t` along the back cone from the pitch circle. The cone leans 2° towards the
+            // apex at the tips, as a mate's does at its own: square to the pitch cone the two would
+            // lie on one line, which the kernel's booleans (and so the interference check) can't
+            // intersect; leaning, they cross at the pitch circle.
+            let (lean_s, lean_c) = (delta + 2f64.to_radians()).sin_cos();
+            let square = |t: f64| (rp + t * lean_c, t * lean_s);
+            let ((rb, zb), (rt, zt)) = (square(-1.5 * m), square(1.5 * m));
+            let ra = tooth.tip_radius(z) * (a - z0) / a + 1.0;
+            revolve(s, &[(rb, zb), (rt, zt), (ra, zt), (ra, z0 - 1.0), (rb, z0 - 1.0)], "cut")?;
+            cyl(s, bevel_hub(tooth, z, cone, b), z0 - b, z0, "join")?;
+            // The bore through both (the teeth shrink, so it is cut, not drawn in the outline).
+            cyl(s, bore, z0 - b - 1.0, h + 1.0, "cut")?;
         }
         Shape::RingGear { space, z, w, od } => {
             let segs = gear_outline(space, z, Flanks::Spline, Rounding::default()).map_err(EngineError::Other)?;
@@ -3167,18 +3135,27 @@ mod tests {
         r["interferences"].as_array().map_or(0.0, |l| l.iter().filter_map(|i| i["volume_mm3"].as_f64()).sum())
     }
 
-    /// A bevel gear's large end lies on its back cone: across the teeth it is the tip circle there,
-    /// d + 2 m cos δ (no tip runs past it), and the teeth reach the small end's pitch plane.
     #[test]
-    fn a_bevel_gears_large_end_lies_on_its_back_cone() {
+    fn a_bevel_gears_teeth_end_on_its_back_cone() {
         // m2 15:15: δ 45°, pitch diameter 30, face width 7 (a third of the 21.2 cone distance).
         let s = inserted("bevel_gear_m2", json!({"size": "15:15"}));
         assert!(s.model.results.iter().all(|r| r.error.is_none()));
         let (lo, hi) = bbox(&s, "Bevel Gear m2 z15");
         let od = 30.0 + 4.0 * std::f64::consts::FRAC_PI_4.cos();
-        // Tooth 0 points along +x.
-        assert!((hi.x - od / 2.0).abs() < 0.05 && lo.x > -od / 2.0, "{lo:?} {hi:?}: {od}");
+        // Tooth 0 points along +x (the back cone leaning 2° in at the tips: m sin δ · 2° less).
+        assert!((hi.x - od / 2.0).abs() < 0.1 && hi.x <= od / 2.0 && lo.x > -od / 2.0, "{lo:?} {hi:?}: {od}");
         assert!((hi.z - 7.0 * std::f64::consts::FRAC_PI_4.cos()).abs() < 1e-6, "{hi:?}");
+        // In a pair neither gear reaches past the other's flat back (each hub behind it as long as
+        // the 14.5 mm face), so a housing can sit against both backs.
+        let mut p = Session::default();
+        run(&mut p, "parts.insert", json!({"family": "bevel_pair_m2", "size": "20:40"}));
+        let (pinion, pinion_hi) = bbox(&p, "Bevel Gear m2 z20");
+        let (mate, mate_hi) = bbox(&p, "Bevel Gear m2 z40");
+        // The pinion's back at z −1.6 m sin δ1 − 0.2 (−1.631); the mate's tips at most −m sin δ1.
+        assert!((pinion.z + 14.5 + 1.6 * 2.0 * 0.5f64.atan().sin() + 0.2).abs() < 1e-6, "{pinion:?}");
+        assert!(mate.z > -2.0 * 0.5f64.atan().sin() - 0.01 && pinion.z + 14.5 < mate.z - 0.5, "{pinion:?} {mate:?}");
+        // The gear's back is across x; the pinion's tips stay inside it.
+        assert!(pinion_hi.x < mate_hi.x - 14.5 - 0.5, "{pinion_hi:?} {mate_hi:?}");
     }
 
     /// Sets go in meshing: a bevel pair and a planetary set leave their teeth touching but not
@@ -3193,6 +3170,30 @@ mod tests {
         assert!(overlap(&mut b) < 0.05, "{}", overlap(&mut b));
         let parts: Vec<String> = b.doc.parts.values().map(|p| p.size.clone()).collect();
         assert!(parts.contains(&"20:40".to_string()) && parts.contains(&"40:20".to_string()), "{parts:?}");
+        // They roll: the pinion turned a third of a pitch and the gear half that the other way stay
+        // clear; the gear turned the same way runs into the pinion.
+        let occ: Vec<Value> = r["occurrences"].as_array().cloned().unwrap_or_default();
+        let roll = |b: &mut Session, sign: f64| {
+            let th = std::f64::consts::PI / 60.0;
+            run(
+                b,
+                "occurrence.move",
+                json!({"occurrence": occ.first(), "space": "world", "axis": [0, 0, 1], "origin": [0, 0, 0], "angle": th, "move_grounded": true}),
+            );
+            run(
+                b,
+                "occurrence.move",
+                json!({"occurrence": occ.get(1), "space": "world", "axis": [1, 0, 0], "origin": [0, 0, 40], "angle": sign * th / 2.0, "move_grounded": true}),
+            );
+        };
+        roll(&mut b, 1.0);
+        let i = run(&mut b, "inspect.interference", json!({}));
+        assert!(overlap(&mut b) < 0.05 && i["unchecked"].as_array().is_some_and(Vec::is_empty), "{i}");
+        // (Where the teeth run into each other the kernel can't always work out how far: then the
+        // pair is listed as not checked, never as clear.)
+        roll(&mut b, -3.0);
+        let i = run(&mut b, "inspect.interference", json!({}));
+        assert!(overlap(&mut b) > 1.0 || i["unchecked"].as_array().is_some_and(|u| !u.is_empty()), "{i}");
         let mut p = Session::default();
         let r = run(&mut p, "parts.insert", json!({"family": "planetary_m1", "size": "12-18-48/3"}));
         assert_eq!(r["components"].as_array().map(Vec::len), Some(5), "{r}");
