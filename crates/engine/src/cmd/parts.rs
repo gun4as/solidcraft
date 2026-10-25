@@ -2267,10 +2267,12 @@ mod tests {
                     let r = s.execute("parts.insert", &json!({"family": id, "size": row["size"], "length": 20, "drive": drive["drive"]}));
                     let r = match r {
                         Ok(r) => r,
-                        // A drive a size does not come in (no hexalobular M20 socket cap) is refused, not built.
+                        // A drive a size does not come in (a socket cap with no ISO 14579 hexalobular
+                        // size) is refused, not built.
                         Err(e) => {
+                            let no_lobe = super::SHCS_LOBE.iter().all(|r| row["size"] != r.0);
                             assert!(
-                                id == "socket_head_cap_screw" && row["size"] == "M20" && drive["drive"] == "hexalobular",
+                                id == "socket_head_cap_screw" && no_lobe && drive["drive"] == "hexalobular",
                                 "{id} {} {}: {e}",
                                 row["size"],
                                 drive["drive"]

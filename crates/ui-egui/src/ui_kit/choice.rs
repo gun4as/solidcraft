@@ -308,15 +308,27 @@ pub(crate) fn list_picker(ui: &mut Ui, key: &str, text: &str, selected: bool) ->
     response
 }
 
-/// Size of a `picture_tile` (three to a dialog's width): the picture with a line of name under it.
-const TILE: egui::Vec2 = egui::vec2(74.0, 62.0);
-
-/// A picture with its name under it, picked like a list item (a library category). Without a
-/// picture yet the name stands alone. Tokens: space_2, space_4, radius_sm, form_primary,
-/// control_fill, hover, border, font_small, text.
-pub(crate) fn picture_tile(ui: &mut Ui, key: &str, picture: Option<&egui::TextureHandle>, label: &str, selected: bool) -> egui::Response {
+/// The size of the `picture_tile`s in a row of `ui`'s width: three to a row (at least two
+/// controls wide), the picture over a line of name.
+pub(super) fn tile_size(ui: &Ui) -> egui::Vec2 {
     let t = Tokens::get();
-    let (rect, response) = ui.allocate_exact_size(TILE, egui::Sense::click());
+    let w = ((super::metrics::dimension(ui.available_width()) - 2.0 * t.space_4) / 3.0).max(2.0 * t.control_height);
+    vec2(w, w * 0.84)
+}
+
+/// A picture with its name under it, picked like a list item (a library category), `size`
+/// big (`tile_size`). Without a picture yet the name stands alone. Tokens: space_2, space_4,
+/// radius_sm, form_primary, control_fill, hover, border, font_small, text.
+pub(crate) fn picture_tile(
+    ui: &mut Ui,
+    key: &str,
+    picture: Option<&egui::TextureHandle>,
+    label: &str,
+    selected: bool,
+    size: egui::Vec2,
+) -> egui::Response {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let fill = if response.hovered() { t.hover } else { t.control_fill };
     ui.painter().rect_filled(rect, t.radius_sm, fill);
     let stroke = if selected { egui::Stroke::new(t.space_2, t.form_primary) } else { t.control_border_stroke(t.border) };
@@ -333,16 +345,17 @@ pub(crate) fn picture_tile(ui: &mut Ui, key: &str, picture: Option<&egui::Textur
     response.on_hover_text(label)
 }
 
-/// `picture_tile`s in rows filling the width.
-pub(crate) fn tile_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T)) {
+/// `picture_tile`s in rows filling the width; `each` gets the tile size.
+pub(crate) fn tile_grid<T>(ui: &mut Ui, values: &[T], mut each: impl FnMut(&mut Ui, &T, egui::Vec2)) {
     let t = Tokens::get();
-    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (TILE.x + t.space_4)).floor().clamp(1.0, 16.0) as usize;
+    let size = tile_size(ui);
+    let columns = ((super::metrics::dimension(ui.available_width()) + t.space_4) / (size.x + t.space_4)).floor().clamp(1.0, 16.0) as usize;
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = vec2(t.space_4, t.space_4);
         for row in values.chunks(columns.max(1)) {
             ui.horizontal(|ui| {
                 for value in row {
-                    each(ui, value);
+                    each(ui, value, size);
                 }
             });
         }

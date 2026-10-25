@@ -451,12 +451,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     let cats: Vec<(usize, Category)> = k.cats.clone().into_iter().enumerate().collect();
     let mut chosen = None;
     ui.vertical(|ui| {
-        tile_grid(ui, &cats, |ui, (i, c)| {
+        tile_grid(ui, &cats, |ui, (i, c), size| {
             let mut sample = c.sample.clone();
             sample["point"] = json!([0.0, 0.0, 0.0]);
             sample["direction"] = json!([0.0, 0.0, 1.0]);
             let shown = picture(ui.ctx(), &sample);
-            if picture_tile(ui, &c.id, shown.texture(), crate::i18n::tr_label(&c.name), c.id == here).clicked() {
+            if picture_tile(ui, &c.id, shown.texture(), crate::i18n::tr_label(&c.name), c.id == here, size).clicked() {
                 chosen = Some(*i);
             }
         });

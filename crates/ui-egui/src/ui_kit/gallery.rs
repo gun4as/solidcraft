@@ -723,6 +723,15 @@ const ELEMENTS: &[Element] = &[
             color_swatch(ui, ui.id().with(n), Tokens::get().accent, true, "Sample", *n);
         });
     }),
+    element!("picture_tile", |ui, _| {
+        let size = tile_size(ui);
+        picture_tile(ui, "gallery", None, "Sample", true, size);
+    }),
+    element!("tile_grid", |ui, _| {
+        tile_grid(ui, &["Spur", "Helical", "Worm", "Pulleys"], |ui, name, size| {
+            picture_tile(ui, name, None, name, *name == "Helical", size);
+        });
+    }),
     element!("action_menu", |ui, _| {
         action_menu(ui, "Actions", |ui| {
             button(ui, "Add", Button::Normal);
