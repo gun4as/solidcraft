@@ -1,5 +1,5 @@
-//! What the viewport shows, independent of the UI toolkit: body meshes, edges, sketches, the
-//! grid and the origin. Used by the headless snapshot renderer; the GPU viewport draws the same
+//! What the viewport shows, independent of the UI toolkit: body meshes, edges, cosmetic threads,
+//! sketches, the grid and the origin. Used by the headless snapshot renderer; the GPU viewport draws the same
 //! content.
 
 use std::sync::Arc;
@@ -9,6 +9,10 @@ use solidcraft_render::{AnalysisColors, Camera, Rgb, Scene, SceneAnalysis, Scene
 use solidcraft_sketch::Sketch;
 
 use crate::{Sel, Session};
+
+#[path = "view_threads.rs"]
+mod threads;
+pub use threads::{MAX_THREAD_TURNS, THREAD_TURN_SEGMENTS, ThreadLines, thread_color, thread_face_radius, thread_lines, thread_minor_diameter};
 
 /// Colours (shared with the GPU viewport).
 pub mod colors {
@@ -523,6 +527,21 @@ fn build_scene(
             for (a, b) in section_segments(&mesh, o, n) {
                 sc.lines.push(SceneLine { points: vec![a, b], color: p.edge, width: 1.6, on_top: false });
             }
+        }
+    }
+    // Cosmetic threads: the model has a plain cylinder, so a helix shows where it is threaded.
+    for t in &st.threads {
+        let Some(body) = st.body(&t.body).filter(|b| s.body_visible(&b.name)) else {
+            continue;
+        };
+        let mesh = body.mesh();
+        let Some(lines) = thread_lines(t, thread_face_radius(t, &mesh), body.display_tol()) else {
+            continue;
+        };
+        let color = thread_color(p.edge, p.body);
+        sc.lines.push(SceneLine { points: lines.helix, color, width: 1.0, on_top: false });
+        for end in lines.ends {
+            sc.lines.push(SceneLine { points: end, color, width: 0.8, on_top: false });
         }
     }
     for ss in &st.sketches {
