@@ -1,9 +1,9 @@
 //! Sweeps along 3D point paths (3D sketch curves: projected, intersection and included curves).
 //! The profile follows the path with a rotation-minimising frame. Smooth paths get one B-spline
-//! wall per profile segment; paths with sharp corners (or profiles with holes) get ruled walls
-//! between stations, mitred at the corners. Sweep options (orientation, twist, end scale, guide
-//! rails; see [`SweepControl`]) reshape the stations; their default leaves them exactly as
-//! described.
+//! wall per profile segment (holes included, except along a closed path); paths with sharp
+//! corners get ruled walls between stations, mitred at the corners. Sweep options (orientation,
+//! twist, end scale, guide rails; see [`SweepControl`]) reshape the stations; their default
+//! leaves them exactly as described.
 
 use mt::builder;
 use solidcraft_geom::{Grid, Plane, Region2, Seg2, Vec2, Vec3};
@@ -23,6 +23,8 @@ const MAX_SMOOTH_STATIONS: usize = 120;
 const MAX_RULED_STATIONS: usize = 2000;
 /// A turn sharper than this between path segments is a corner (radians).
 const CORNER: f64 = 0.35;
+/// Profile segments (every loop's together) of a sweep with smooth walls; more are ruled.
+const MAX_SMOOTH_SEGMENTS: usize = 1024;
 /// Samples per profile segment of the smooth walls.
 const SEG_SAMPLES: usize = 12;
 /// Stations of a smooth sweep that twists or scales, at the least.
@@ -532,7 +534,8 @@ pub fn sweep_path_with(plane: &Plane, region: &Region2, path: &[Vec3], ctl: &Swe
         .pop()
         .map(|r| r.oriented())
         .ok_or_else(|| KernelError::Invalid("profile".into()))?;
-    if !corner && region.holes.is_empty() {
+    // A closed path closes each loop's walls on themselves; that is built for the outline alone.
+    if !corner && !(closed_path(&pts) && !region.holes.is_empty()) {
         // Smooth: evenly spaced stations, tangents from neighbours.
         let len: f64 = pts.windows(2).map(|w| w[0].dist(w[1])).sum();
         let n = smooth_count(pts.len(), ctl);
@@ -550,7 +553,7 @@ pub fn sweep_path_with(plane: &Plane, region: &Region2, path: &[Vec3], ctl: &Swe
             if let Ok(b) = smooth_closed_walls(plane, &profile.outer, &st, offset, expected) {
                 return Ok(b);
             }
-        } else if let Ok(b) = smooth_walls(plane, &profile.outer, &st, expected) {
+        } else if let Ok(b) = smooth_walls(plane, &profile, &st, expected) {
             return Ok(b);
         }
     }
@@ -792,49 +795,39 @@ fn smooth_closed_walls(plane: &Plane, profile: &NumberedLoop, st: &[Station], of
     })
 }
 
-/// One B-spline wall per profile segment through the stations, capped; checked by volume.
-fn smooth_walls(plane: &Plane, profile: &NumberedLoop, st: &[Station], expected: f64) -> Result<Body> {
-    let lp = &profile.lp;
-    let nseg = lp.segs.len();
+/// One B-spline wall per segment of every loop of the (oriented) profile through the stations,
+/// the outline's and the holes' ends capped together; checked by volume.
+fn smooth_walls(plane: &Plane, profile: &NumberedRegion, st: &[Station], expected: f64) -> Result<Body> {
     let fail = |w: &str| KernelError::Failed(format!("path sweep: {w}"));
-    if nseg == 0 || nseg > 64 || st.len() < 4 {
+    let loops: Vec<&NumberedLoop> = profile.loops().collect();
+    let nseg: usize = loops.iter().map(|l| l.lp.segs.len()).sum();
+    if loops.iter().any(|l| l.lp.segs.is_empty()) || nseg > MAX_SMOOTH_SEGMENTS || st.len() < 4 {
         return Err(fail("profile"));
     }
     let s0 = st.first().map(|s| s.at).unwrap_or_default();
     let at = |i: usize, q: Vec2| st.get(i).map(|s| s.at + s.apply(plane.to_world(q) - s0)).unwrap_or_default();
     let n = st.len() - 1;
-    let mut data = Vec::with_capacity(nseg);
-    for s in &lp.segs {
-        let samples =
-            Grid::from_fn([n + 1, SEG_SAMPLES], |i, j| at(i, s.point_at(j as f64 / (SEG_SAMPLES - 1) as f64))).ok_or_else(|| fail("samples"))?;
-        data.push(interpolate_net(&samples).ok_or_else(|| fail("wall surface"))?);
+    let mut data = Vec::with_capacity(loops.len());
+    for l in &loops {
+        let mut fits = Vec::with_capacity(l.lp.segs.len());
+        for s in &l.lp.segs {
+            let samples =
+                Grid::from_fn([n + 1, SEG_SAMPLES], |i, j| at(i, s.point_at(j as f64 / (SEG_SAMPLES - 1) as f64))).ok_or_else(|| fail("samples"))?;
+            fits.push(interpolate_net(&samples).ok_or_else(|| fail("wall surface"))?);
+        }
+        data.push(fits);
     }
+    let tol = (profile.region().area().abs().sqrt() * 0.05).max(1e-3);
     guard("path sweep", || {
-        let start: Vec<mt::Vertex> = lp.segs.iter().map(|s| builder::vertex(p3(at(0, s.start())))).collect();
-        let end: Vec<mt::Vertex> = lp.segs.iter().map(|s| builder::vertex(p3(at(n, s.start())))).collect();
-        let (mut e0, mut e1, mut seams) = (Vec::with_capacity(nseg), Vec::with_capacity(nseg), Vec::with_capacity(nseg));
-        for (j, NetFit { u_ends: [c0, c1], v_ends: [seam, _], .. }) in data.iter().enumerate() {
-            let (Some(a0), Some(b0), Some(a1), Some(b1)) = (start.get(j), start.get((j + 1) % nseg), end.get(j), end.get((j + 1) % nseg)) else {
-                return Err(fail("vertices"));
-            };
-            e0.push(mt::Edge::try_new(a0, b0, mt::Curve::BSplineCurve(c0.clone())).map_err(|e| fail(&e.to_string()))?);
-            e1.push(mt::Edge::try_new(a1, b1, mt::Curve::BSplineCurve(c1.clone())).map_err(|e| fail(&e.to_string()))?);
-            seams.push(mt::Edge::try_new(a0, a1, mt::Curve::BSplineCurve(seam.clone())).map_err(|e| fail(&e.to_string()))?);
+        let (mut walls, mut w0, mut w1) = (Vec::with_capacity(nseg), Vec::with_capacity(loops.len()), Vec::with_capacity(loops.len()));
+        for (l, fits) in loops.iter().zip(&data) {
+            let (sides, first, last) = loop_walls(l, fits, |q| at(0, q), |q| at(n, q))?;
+            walls.extend(sides);
+            w0.push(first);
+            w1.push(last);
         }
-        let mut walls = Vec::with_capacity(nseg);
-        for (j, NetFit { surface: surf, .. }) in data.iter().enumerate() {
-            let (Some(a), Some(b), Some(sa), Some(sb)) = (e0.get(j), e1.get(j), seams.get(j), seams.get((j + 1) % nseg)) else {
-                return Err(fail("edges"));
-            };
-            let w: mt::Wire = vec![sa.clone(), b.clone(), sb.inverse(), a.inverse()].into();
-            let wall = mt::Face::try_new(vec![w], mt::Surface::BSplineSurface(surf.clone())).map_err(|e| fail(&e.to_string()))?;
-            walls.push((wall, Some(record::profile(profile.numbers(j)))));
-        }
-        let w0: mt::Wire = e0.iter().cloned().collect();
-        let w1: mt::Wire = e1.iter().cloned().collect();
-        let tol = (lp.signed_area().abs().sqrt() * 0.05).max(1e-3);
         for ws in [walls.clone(), walls.iter().map(|(f, prov)| (f.inverse(), prov.clone())).collect()] {
-            if let Ok(b) = cap_and_close(ws, std::slice::from_ref(&w0), std::slice::from_ref(&w1), false)
+            if let Ok(b) = cap_and_close(ws, &w0, &w1, false)
                 && b.tessellate(tol).is_ok_and(|m| (m.measure().volume - expected).abs() <= 0.15 * expected.abs())
             {
                 return Ok(b);
@@ -842,6 +835,41 @@ fn smooth_walls(plane: &Plane, profile: &NumberedLoop, st: &[Station], expected:
         }
         Err(fail("the walls do not close a solid"))
     })
+}
+
+/// The walls of one closed profile loop from its segments' surfaces (`fits`, in order), each
+/// after its profile segment, and the loop's wires at the first and the last station (`first`
+/// and `last` place a profile point there). Neighbouring walls share their seam edges.
+fn loop_walls(
+    profile: &NumberedLoop,
+    fits: &[NetFit],
+    first: impl Fn(Vec2) -> Vec3,
+    last: impl Fn(Vec2) -> Vec3,
+) -> Result<(Vec<Side>, mt::Wire, mt::Wire)> {
+    let fail = |w: &str| KernelError::Failed(format!("path sweep: {w}"));
+    let segs = &profile.lp.segs;
+    let nseg = segs.len();
+    let start: Vec<mt::Vertex> = segs.iter().map(|s| builder::vertex(p3(first(s.start())))).collect();
+    let end: Vec<mt::Vertex> = segs.iter().map(|s| builder::vertex(p3(last(s.start())))).collect();
+    let (mut e0, mut e1, mut seams) = (Vec::with_capacity(nseg), Vec::with_capacity(nseg), Vec::with_capacity(nseg));
+    for (j, NetFit { u_ends: [c0, c1], v_ends: [seam, _], .. }) in fits.iter().enumerate() {
+        let (Some(a0), Some(b0), Some(a1), Some(b1)) = (start.get(j), start.get((j + 1) % nseg), end.get(j), end.get((j + 1) % nseg)) else {
+            return Err(fail("vertices"));
+        };
+        e0.push(mt::Edge::try_new(a0, b0, mt::Curve::BSplineCurve(c0.clone())).map_err(|e| fail(&e.to_string()))?);
+        e1.push(mt::Edge::try_new(a1, b1, mt::Curve::BSplineCurve(c1.clone())).map_err(|e| fail(&e.to_string()))?);
+        seams.push(mt::Edge::try_new(a0, a1, mt::Curve::BSplineCurve(seam.clone())).map_err(|e| fail(&e.to_string()))?);
+    }
+    let mut walls = Vec::with_capacity(nseg);
+    for (j, NetFit { surface: surf, .. }) in fits.iter().enumerate() {
+        let (Some(a), Some(b), Some(sa), Some(sb)) = (e0.get(j), e1.get(j), seams.get(j), seams.get((j + 1) % nseg)) else {
+            return Err(fail("edges"));
+        };
+        let w: mt::Wire = vec![sa.clone(), b.clone(), sb.inverse(), a.inverse()].into();
+        let wall = mt::Face::try_new(vec![w], mt::Surface::BSplineSurface(surf.clone())).map_err(|e| fail(&e.to_string()))?;
+        walls.push((wall, Some(record::profile(profile.numbers(j)))));
+    }
+    Ok((walls, e0.into_iter().collect(), e1.into_iter().collect()))
 }
 
 #[cfg(test)]
@@ -1020,6 +1048,36 @@ mod tests {
         assert!(crate::sweep_with(&Plane::XY, &square(3.0), &up(10.0), &along).is_err());
     }
 
+    /// A gear-like outline of 120 segments around a round bore, swept along a line with a twist:
+    /// one smooth wall per profile segment (the bore's too) and two caps, not ruled strips
+    /// between dozens of stations, and the volume of the straight prism.
+    #[test]
+    fn twisted_sweep_of_a_holed_outline_has_one_wall_per_segment() {
+        let teeth = 20;
+        let outline: Vec<Vec2> = (0..teeth * 6)
+            .map(|i| {
+                let t = i as f64 / (teeth * 6) as f64 * 2.0 * PI;
+                // Three points out on each tooth, three down in each gap.
+                let r = if (i / 3) % 2 == 0 { 12.0 } else { 10.0 };
+                Vec2::new(r * t.cos(), r * t.sin())
+            })
+            .collect();
+        let region = Region2 { outer: Loop2::polygon(&outline), holes: vec![Loop2::circle(Vec2::ZERO, 4.0).reversed()] };
+        let (h, twist) = (20.0, 30f64.to_radians());
+        let ctl = SweepControl { twist, ..SweepControl::default() };
+        let b = crate::sweep_with(&Plane::XY, &region, &up(h), &ctl).unwrap();
+        let segments: usize =
+            crate::numbered::number_regions(std::slice::from_ref(&region)).iter().flat_map(|r| r.loops()).map(|l| l.lp.segs.len()).sum();
+        assert!(segments > 120, "{segments}");
+        assert_eq!(b.faces(0.01).unwrap().len(), segments + 2);
+        let v = b.tessellate(0.002).unwrap().measure().volume;
+        let want = region.area().abs() * h;
+        assert!((v - want).abs() < 2e-3 * want, "volume {v} vs {want}");
+        // The bore runs through: no material on the axis.
+        let mesh = b.tessellate(0.01).unwrap();
+        assert!(mesh.positions.iter().all(|p| p.x.hypot(p.y) > 4.0 - 1e-3), "inside the bore");
+    }
+
     /// Out-of-range options are refused, never a panic; the default options are a plain sweep.
     #[test]
     fn sweep_options_refuse_hostile_values() {
@@ -1039,7 +1097,7 @@ mod tests {
             assert!(crate::sweep_sheet_with(&Plane::XY, std::slice::from_ref(&circle(2.0).outer.segs), &up(10.0), &ctl).is_err(), "{ctl:?}");
             assert!(sweep_path_with(&Plane::XY, &circle(2.0), &[Vec3::ZERO, Vec3::new(0.0, 0.0, 10.0)], &ctl).is_err(), "{ctl:?}");
         }
-        // The largest twist still builds (a holed profile: ruled walls through dense stations).
+        // The largest twist still builds, a holed profile too.
         let holed = Region2 { outer: square(3.0).outer, holes: vec![Loop2::circle(Vec2::ZERO, 1.0).reversed()] };
         let max = SweepControl { twist: SweepControl::MAX_TWIST, scale: 0.5, ..SweepControl::default() };
         assert!(crate::sweep_with(&Plane::XY, &holed, &up(10.0), &max).is_ok());
