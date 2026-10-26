@@ -3158,5 +3158,10 @@
   "Root fillet": "歯元すみ肉",
   "Tip fillet": "歯先丸み",
   "Offset hole at": "偏心穴の位置",
-  "Offset hole Ø": "偏心穴の径"
+  "Offset hole Ø": "偏心穴の径",
+  "Hub Ø (seat)": "ハブ径（軸受座）",
+  "Hub length": "ハブ長さ",
+  "Mate's bore": "相手歯車の穴径",
+  "Mate's hub Ø": "相手歯車のハブ径",
+  "Mate's hub length": "相手歯車のハブ長さ"
 }

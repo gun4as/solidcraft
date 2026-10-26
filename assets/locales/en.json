@@ -3158,5 +3158,10 @@
   "Root fillet": "Root fillet",
   "Tip fillet": "Tip fillet",
   "Offset hole at": "Offset hole at",
-  "Offset hole Ø": "Offset hole Ø"
+  "Offset hole Ø": "Offset hole Ø",
+  "Hub Ø (seat)": "Hub Ø (seat)",
+  "Hub length": "Hub length",
+  "Mate's bore": "Mate's bore",
+  "Mate's hub Ø": "Mate's hub Ø",
+  "Mate's hub length": "Mate's hub length"
 }

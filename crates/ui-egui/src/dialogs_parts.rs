@@ -195,6 +195,13 @@ pub struct Options {
     /// A spur gear's offset hole: its centre's distance from the axis and its diameter (mm).
     pub hole_at: String,
     pub hole_diameter: String,
+    /// A bevel gear's hub: its diameter (a bearing's seat) and length (mm); for a bevel pair the
+    /// gear's bore and hub too (`mate_…`, the others being the pinion's).
+    pub hub_diameter: String,
+    pub hub_length: String,
+    pub mate_bore: String,
+    pub mate_hub_diameter: String,
+    pub mate_hub_length: String,
 }
 
 /// "1,5 mm" / "1.5" / "20°" → 1.5 / 20; empty: none.
@@ -229,6 +236,9 @@ impl Options {
             tip_fillet: f(part.tip_fillet),
             hole_at: f(part.offset_hole.map(|h| h[0])),
             hole_diameter: f(part.offset_hole.map(|h| h[1])),
+            hub_diameter: f(part.hub_diameter),
+            hub_length: f(part.hub_length),
+            ..Options::default()
         }
     }
 
@@ -279,6 +289,11 @@ impl Options {
             ("backlash", &self.backlash, "backlash"),
             ("root_fillet", &self.root_fillet, "root fillet"),
             ("tip_fillet", &self.tip_fillet, "tip fillet"),
+            ("hub_diameter", &self.hub_diameter, "hub diameter"),
+            ("hub_length", &self.hub_length, "hub length"),
+            ("mate_bore", &self.mate_bore, "mate's bore"),
+            ("mate_hub_diameter", &self.mate_hub_diameter, "mate's hub diameter"),
+            ("mate_hub_length", &self.mate_hub_length, "mate's hub length"),
         ] {
             if takes(key) {
                 put(key, number(text, what)?.map(|v| json!(v)));
@@ -337,6 +352,21 @@ impl Options {
         if takes("offset_hole") {
             text_row(ui, "Offset hole at", &mut self.hole_at, "none");
             text_row(ui, "Offset hole Ø", &mut self.hole_diameter, "none");
+        }
+        if takes("hub_diameter") {
+            text_row(ui, "Hub Ø (seat)", &mut self.hub_diameter, "automatic");
+        }
+        if takes("hub_length") {
+            text_row(ui, "Hub length", &mut self.hub_length, "automatic");
+        }
+        if takes("mate_bore") {
+            text_row(ui, "Mate's bore", &mut self.mate_bore, "automatic");
+        }
+        if takes("mate_hub_diameter") {
+            text_row(ui, "Mate's hub Ø", &mut self.mate_hub_diameter, "automatic");
+        }
+        if takes("mate_hub_length") {
+            text_row(ui, "Mate's hub length", &mut self.mate_hub_length, "automatic");
         }
     }
 }

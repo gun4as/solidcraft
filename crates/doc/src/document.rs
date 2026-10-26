@@ -2496,6 +2496,12 @@ pub struct StandardPart {
     /// A spur gear's second hole when chosen: [distance of its centre from the axis, diameter], mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset_hole: Option<[f64; 2]>,
+    /// A bevel gear's hub when chosen: its diameter (a bearing's seat) and its length behind the
+    /// gear's back (0: none), mm; none: the defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_diameter: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_length: Option<f64>,
 }
 
 /// A component whose contents come from another design file (Insert Design): where that file

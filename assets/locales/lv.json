@@ -3158,5 +3158,10 @@
   "Root fillet": "Pēdas noapaļojums",
   "Tip fillet": "Virsotnes noapaļojums",
   "Offset hole at": "Nobīdītā atvere",
-  "Offset hole Ø": "Nobīdītās atveres Ø"
+  "Offset hole Ø": "Nobīdītās atveres Ø",
+  "Hub Ø (seat)": "Rumbas Ø (sēža)",
+  "Hub length": "Rumbas garums",
+  "Mate's bore": "Otra urbums",
+  "Mate's hub Ø": "Otra rumbas Ø",
+  "Mate's hub length": "Otra rumbas gar."
 }

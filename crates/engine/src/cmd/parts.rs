@@ -34,10 +34,13 @@ pub static COMMANDS: &[CommandSpec] = &[
          bore?: mm (gears except ring gears, worms and pulleys; default from the size); \
          helix_angle?: angle (helical and herringbone gears, 5…45 deg, default 20 deg; negative: left hand); \
          starts?: 1…4 (a worm wheel: the starts of the worm it meshes with, default 1); \
+         hub_diameter?, hub_length?: mm (bevel gears: the hub behind the back, a bearing's seat; default the largest \
+         bearing bore within the small end's roots, as long as the face is wide; length 0: no hub); \
+         mate_bore?, mate_hub_diameter?, mate_hub_length? (a bevel pair: the gear's, the others the pinion's); \
          at?: [x,y,z] on a hole's rim or wall (the part seats on the hole's face with a rigid joint) | point?: [x,y,z] with direction?: [x,y,z] (no joint); name?",
     ),
     CommandSpec::new("parts.resize", "Change Part Size", resize_atomic).icon("scale")
-        .params("component: id|name of an inserted part; size?; length?; bore? (gears, worms, pulleys); helix_angle?; starts? — rebuilds it (joints keep it seated)"),
+        .params("component: id|name of an inserted part; size?; length?; bore? (gears, worms, pulleys); helix_angle?; starts?; hub_diameter?, hub_length? (bevel gears) — rebuilds it (joints keep it seated)"),
 ];
 
 /// A family: (id, name, standard).
@@ -329,8 +332,13 @@ fn options(family: &str) -> Vec<&'static str> {
             vec!["bore", "helix_angle", "pressure_angle", "profile_shift", "backlash", "root_fillet", "tip_fillet"]
         }
         Some(GearKind::WormWheel) => vec!["bore", "starts"],
-        Some(GearKind::Bevel) => vec!["bore"],
+        Some(GearKind::Bevel) => vec!["bore", "hub_diameter", "hub_length"],
         Some(_) => vec!["bore"],
+        // A bevel pair's gears each take their own; the other sets none yet.
+        None if set_family(family).is_some_and(|(k, _)| k == SetKind::Bevel) => {
+            vec!["bore", "hub_diameter", "hub_length", "mate_bore", "mate_hub_diameter", "mate_hub_length"]
+        }
+        None if set_family(family).is_some() => vec![],
         None if is_drive(family) => vec!["bore"],
         None => {
             let mut o = Vec::new();
@@ -351,7 +359,7 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     let Some(b) = bore else { return Ok(sh) };
     let root = match &sh {
         Shape::Gear { tooth, z, .. } => tooth.root_radius(*z),
-        Shape::Bevel { tooth, z, cone, b, .. } => bevel_hub(*tooth, *z, *cone, *b) / 2.0,
+        Shape::Bevel { hub, .. } => hub / 2.0,
         Shape::Worm { m, d1, .. } => d1 / 2.0 - 1.25 * m,
         Shape::Pulley { p, pld, depth, z, .. } => f64::from(*z) * p / std::f64::consts::PI / 2.0 - pld - depth,
         Shape::RingGear { .. } => return Err("a ring gear has no bore".into()),
@@ -368,7 +376,7 @@ fn with_bore(sh: Shape, bore: Option<f64>) -> std::result::Result<Shape, String>
     Ok(match sh {
         Shape::Gear { tooth, z, w, helix, herringbone, round, offset, .. } => Shape::Gear { tooth, z, w, bore: b, helix, herringbone, round, offset },
         Shape::Worm { m, d1, starts, len, .. } => Shape::Worm { m, d1, starts, len, bore: b },
-        Shape::Bevel { tooth, z, delta, cone, b: w, .. } => Shape::Bevel { tooth, z, delta, cone, b: w, bore: b },
+        Shape::Bevel { tooth, z, delta, cone, b: w, hub, hub_len, .. } => Shape::Bevel { tooth, z, delta, cone, b: w, bore: b, hub, hub_len },
         Shape::Pulley { p, pld, depth, rg, z, w, flange, .. } => Shape::Pulley { p, pld, depth, rg, z, w, flange, bore: b },
         other => other,
     })
@@ -400,6 +408,9 @@ struct Extra {
     tip_fillet: Option<f64>,
     /// A spur gear's second hole: (distance of its centre from the axis, diameter), mm.
     offset_hole: Option<[f64; 2]>,
+    /// A bevel gear's hub: its diameter (a bearing's seat) and length behind the back, mm.
+    hub_diameter: Option<f64>,
+    hub_length: Option<f64>,
 }
 
 /// The gear tooth options' ranges.
@@ -477,6 +488,8 @@ fn extra_params(s: &Session, p: &Value, cmd: &str) -> Result<Extra> {
         root_fillet: number("root_fillet")?,
         tip_fillet: number("tip_fillet")?,
         offset_hole,
+        hub_diameter: number("hub_diameter")?,
+        hub_length: number("hub_length")?,
     })
 }
 
@@ -910,7 +923,7 @@ enum Shape {
     /// towards the pitch cone's apex (on the axis at r_pitch / tan δ), `delta` the pitch cone
     /// angle, `cone` the cone distance, `b` the face width along it; a hub behind the large end,
     /// a bore through.
-    Bevel { tooth: BevelTooth, z: u32, delta: f64, cone: f64, b: f64, bore: f64 },
+    Bevel { tooth: BevelTooth, z: u32, delta: f64, cone: f64, b: f64, bore: f64, hub: f64, hub_len: f64 },
     /// An internal ring gear: `z` teeth pointing in, cut from a cylinder of outside diameter
     /// `od` by the outline of their spaces (`space`: addendum and dedendum swapped), z 0…w.
     RingGear { space: Involute, z: u32, w: f64, od: f64 },
@@ -1075,6 +1088,20 @@ impl BevelTooth {
         self.radius(z, -1.25 * self.m)
     }
 
+    /// The back cone's lean towards the apex at the tips (see the build).
+    const LEAN: f64 = 2.0 * std::f64::consts::PI / 180.0;
+
+    /// The flat back's radius, where the cut along the back cone starts (1.5 modules inside the
+    /// pitch circle along it).
+    fn back_radius(&self, z: u32) -> f64 {
+        self.pitch_radius(z) - 1.5 * self.m * (self.delta + Self::LEAN).cos()
+    }
+
+    /// Across the teeth, at the back cone.
+    fn outside_diameter(&self, z: u32) -> f64 {
+        2.0 * (self.pitch_radius(z) + self.m * (self.delta + Self::LEAN).cos())
+    }
+
     /// The large end's outline: the back cone's spur gear tooth by tooth, each point at its
     /// radius (`radius`) and at its angle / cos δ (the back cone unrolled is that gear).
     fn outline(&self, z: u32) -> std::result::Result<Vec<Seg>, String> {
@@ -1092,7 +1119,16 @@ impl BevelTooth {
     }
 }
 
-/// A bevel gear's hub diameter: within its small end's root circle.
+/// Bearing bores (ISO 15): the hubs bevel gears take by default, as bearing seats (mm).
+const BEARING_BORES: [f64; 26] = [
+    3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 15.0, 17.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 90.0,
+    100.0,
+];
+
+/// The longest bevel gear hub (mm).
+const MAX_HUB_LENGTH: f64 = 300.0;
+
+/// The widest hub a bevel gear's default leaves room for: within its small end's root circle.
 fn bevel_hub(tooth: BevelTooth, z: u32, cone: f64, b: f64) -> f64 {
     2.0 * 0.85 * tooth.root_radius(z) * (cone - b) / cone
 }
@@ -1127,6 +1163,9 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
         }
         return Ok(Shape::Worm { m, d1, starts, len, bore: bore_for(d1 / 2.0 - 1.25 * m) });
     }
+    if kind != GearKind::Bevel && (extra.hub_diameter.is_some() || extra.hub_length.is_some()) {
+        return Err("only bevel gears take a hub diameter or length".into());
+    }
     if kind == GearKind::Bevel {
         tooth_options(kind, m, 0.0, &extra)?;
         let (z, mate) = pair(size)
@@ -1142,8 +1181,25 @@ fn gear_shape(kind: GearKind, m: f64, size: &str, length: Option<f64>, extra: Ex
         }
         let tooth = BevelTooth { m, delta };
         tooth.outline(z)?;
-        let bore = bore_for(bevel_hub(tooth, z, cone, b) / 2.0);
-        return Ok(Shape::Bevel { tooth, z, delta, cone, b, bore });
+        // The hub: by default the largest bearing bore within the small end's roots; at most out
+        // to the flat back's edge less a millimetre.
+        let max = 2.0 * tooth.back_radius(z) - 2.0;
+        let hub = match extra.hub_diameter {
+            Some(d) if !(d.is_finite() && d >= 3.0 && d <= max) => {
+                return Err(format!("a hub {d} mm across does not fit: 3…{max:.1} mm for this size"));
+            }
+            Some(d) => d,
+            None => {
+                let fits = bevel_hub(tooth, z, cone, b);
+                BEARING_BORES.iter().copied().rev().find(|d| *d <= fits).unwrap_or(3.0)
+            }
+        };
+        let hub_len = extra.hub_length.unwrap_or(b);
+        if !(hub_len.is_finite() && (0.0..=MAX_HUB_LENGTH).contains(&hub_len)) {
+            return Err(format!("the hub length must be 0…{MAX_HUB_LENGTH} mm (0: none)"));
+        }
+        let bore = bore_for(hub / 2.0);
+        return Ok(Shape::Bevel { tooth, z, delta, cone, b, bore, hub, hub_len });
     }
     let z = teeth(size).ok_or_else(|| format!("no tooth count `{size}` (6…200)"))?;
     let w = length.unwrap_or_else(|| gear_width(m));
@@ -1289,6 +1345,9 @@ fn shape(family: &str, size: &str, length: Option<f64>, extra: Extra) -> std::re
     }
     if extra.helix.is_some() || extra.starts.is_some() {
         return Err("only gears take a helix angle or starts".into());
+    }
+    if extra.hub_diameter.is_some() || extra.hub_length.is_some() {
+        return Err("only bevel gears take a hub diameter or length".into());
     }
     if extra.pressure_angle.is_some()
         || extra.profile_shift.is_some()
@@ -2022,7 +2081,7 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
                 twisted_solid(s, &segs, &[axial(bore)], mat, 0.0, w, rate * w, "new")?;
             }
         }
-        Shape::Bevel { tooth, z, delta, cone, b, bore } => {
+        Shape::Bevel { tooth, z, delta, b, bore, hub, hub_len, .. } => {
             // The teeth end on the back cone (square to the pitch cone through the pitch circle at
             // z 0): swept towards the apex from a plane behind its roots to the small end's pitch
             // plane (z h), then cut along it. Behind them the flat back (a mate's tips reach the
@@ -2044,7 +2103,7 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
             // apex at the tips, as a mate's does at its own: square to the pitch cone the two would
             // lie on one line, which the kernel's booleans (and so the interference check) can't
             // intersect; leaning, they cross at the pitch circle.
-            let (lean_s, lean_c) = (delta + 2f64.to_radians()).sin_cos();
+            let (lean_s, lean_c) = (delta + BevelTooth::LEAN).sin_cos();
             let square = |t: f64| (rp + t * lean_c, t * lean_s);
             let ((rb, zb), (rt, zt)) = (square(-1.5 * m), square(1.5 * m));
             let ra = tooth.tip_radius(z) * (a - z0) / a + 1.0;
@@ -2052,8 +2111,10 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
             // teeth slow. (The bore is cut, not drawn in the outline, as the teeth shrink.)
             // Up into the teeth's solid middle, not just to their bottom face: a join on one plane is
             // slow.
-            cyl(s, bevel_hub(tooth, z, cone, b), z0 - b, z0 + 0.5 * (h - z0), "join")?;
-            cyl(s, bore, z0 - b - 1.0, h + 1.0, "cut")?;
+            if hub_len > 0.0 {
+                cyl(s, hub, z0 - hub_len, z0 + 0.5 * (h - z0), "join")?;
+            }
+            cyl(s, bore, z0 - hub_len - 1.0, h + 1.0, "cut")?;
             revolve(s, &[(rb, zb), (rt, zt), (ra, zt), (ra, z0 - 1.0), (rb, z0 - 1.0)], "cut")?;
         }
         Shape::RingGear { space, z, w, od } => {
@@ -2173,9 +2234,11 @@ fn drive_sizes(family: &str) -> Vec<Value> {
         return pairs
             .iter()
             .filter_map(|(z, mate)| match gear_shape(kind, m, &format!("{z}:{mate}"), None, Extra::default()) {
-                Ok(Shape::Bevel { tooth, z, delta, b, bore, .. }) => Some(json!({"size": format!("{z}:{mate}"), "teeth": z, "mate": mate,
-                    "pitch_diameter": r3(2.0 * tooth.pitch_radius(z)), "outside_diameter": r3(2.0 * tooth.tip_radius(z)),
-                    "cone_angle": r3(delta.to_degrees()), "face_width": b, "bore": bore})),
+                Ok(Shape::Bevel { tooth, z, delta, b, bore, hub, hub_len, .. }) => {
+                    Some(json!({"size": format!("{z}:{mate}"), "teeth": z, "mate": mate,
+                    "pitch_diameter": r3(2.0 * tooth.pitch_radius(z)), "outside_diameter": r3(tooth.outside_diameter(z)),
+                    "cone_angle": r3(delta.to_degrees()), "face_width": b, "bore": bore, "hub_diameter": hub, "hub_length": hub_len}))
+                }
                 _ => None,
             })
             .collect();
@@ -2293,7 +2356,7 @@ fn placement(at: Vec3, dir: Vec3, spin: f64) -> solidcraft_doc::Mat {
 
 /// The parts of a set, each (insert parameters, placement in the set's frame), turned so their
 /// teeth mesh: a tooth of one where the other has a gap, on the line between their centres.
-fn set_members(kind: SetKind, m: f64, size: &str, length: Option<f64>) -> std::result::Result<Vec<(Value, solidcraft_doc::Mat)>, String> {
+fn set_members(kind: SetKind, m: f64, size: &str, length: Option<f64>, p: &Value) -> std::result::Result<Vec<(Value, solidcraft_doc::Mat)>, String> {
     use std::f64::consts::PI;
     let suffix = MODULES.iter().find(|x| x.1 == m).map_or("m1", |x| x.0);
     let with_len = |mut p: Value| {
@@ -2309,10 +2372,20 @@ fn set_members(kind: SetKind, m: f64, size: &str, length: Option<f64>) -> std::r
             // The pinion along z, the gear along −x, their pitch cones sharing the apex (0, 0, rp2)
             // and touching at (rp1, 0, 0), where the gear (seen from its own axis, at its angle π)
             // turns a gap.
+            // The pinion's bore and hub as given, the gear's as `mate_…`.
+            let own = |mut q: Value, prefix: &str| {
+                for key in ["bore", "hub_diameter", "hub_length"] {
+                    if let Some(v) = p.get(format!("{prefix}{key}")).filter(|v| !v.is_null()) {
+                        q[key] = v.clone();
+                    }
+                }
+                q
+            };
+            let (pinion, gear) = (format!("{z1}:{z2}"), format!("{z2}:{z1}"));
             vec![
-                (with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": format!("{z1}:{z2}")})), placement(Vec3::ZERO, Vec3::Z, 0.0)),
+                (own(with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": pinion})), ""), placement(Vec3::ZERO, Vec3::Z, 0.0)),
                 (
-                    with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": format!("{z2}:{z1}")})),
+                    own(with_len(json!({"family": format!("bevel_gear_{suffix}"), "size": gear})), "mate_"),
                     placement(Vec3::new(rp1, 0.0, rp2), Vec3::X * -1.0, PI - PI / f64::from(z2)),
                 ),
             ]
@@ -2374,7 +2447,7 @@ fn insert_set(s: &mut Session, p: &Value, kind: SetKind, m: f64, size: &str) -> 
     if p.get("at").is_some() {
         return Err(bad(cmd, "a set is placed at a `point`, not seated in a hole"));
     }
-    let members = set_members(kind, m, size, length_param(p, cmd)?).map_err(|e| bad(cmd, e))?;
+    let members = set_members(kind, m, size, length_param(p, cmd)?, p).map_err(|e| bad(cmd, e))?;
     let at = p.get("point").and_then(vec3).unwrap_or(Vec3::ZERO);
     let dir = p.get("direction").and_then(vec3).and_then(|d| d.normalized()).unwrap_or(Vec3::Z);
     let frame = placement(at, dir, 0.0);
@@ -2557,6 +2630,8 @@ fn saved_extra(part: &solidcraft_doc::StandardPart) -> Extra {
         root_fillet: part.root_fillet,
         tip_fillet: part.tip_fillet,
         offset_hole: part.offset_hole,
+        hub_diameter: part.hub_diameter,
+        hub_length: part.hub_length,
     }
 }
 
@@ -2577,6 +2652,8 @@ fn resized_extra(p: &Value, given: Extra, saved: Extra) -> Extra {
         root_fillet: pick(p, "root_fillet", given.root_fillet, saved.root_fillet),
         tip_fillet: pick(p, "tip_fillet", given.tip_fillet, saved.tip_fillet),
         offset_hole: pick(p, "offset_hole", given.offset_hole, saved.offset_hole),
+        hub_diameter: pick(p, "hub_diameter", given.hub_diameter, saved.hub_diameter),
+        hub_length: pick(p, "hub_length", given.hub_length, saved.hub_length),
     }
 }
 
@@ -2597,6 +2674,8 @@ fn standard_part(family: &str, size: &str, sh: &Shape, bore: Option<f64>, extra:
         root_fillet: extra.root_fillet,
         tip_fillet: extra.tip_fillet,
         offset_hole: extra.offset_hole,
+        hub_diameter: extra.hub_diameter,
+        hub_length: extra.hub_length,
     }
 }
 
@@ -3165,6 +3244,48 @@ mod tests {
         assert!(mate.z > -2.0 * 0.5f64.atan().sin() - 0.01 && pinion.z + 14.5 < mate.z - 0.5, "{pinion:?} {mate:?}");
         // The gear's back is across x; the pinion's tips stay inside it.
         assert!(pinion_hi.x < mate_hi.x - 14.5 - 0.5, "{pinion_hi:?} {mate_hi:?}");
+    }
+
+    /// A bevel gear's hub is a bearing's seat: as asked (diameter, length, bore), by default the
+    /// largest bearing bore within the small end's roots; in a pair each gear takes its own.
+    #[test]
+    fn a_bevel_gears_hub_is_as_asked() {
+        let name = "Bevel Gear m2 z15";
+        let h = inserted("bevel_gear_m2", json!({"size": "15:15", "hub_diameter": 12, "hub_length": 10, "bore": 6}));
+        assert!(h.model.results.iter().all(|r| r.error.is_none()));
+        let (lo, hi) = bbox(&h, name);
+        // The flat back at z −1.6 m sin δ − 0.2, the hub 10 below it.
+        let back = -1.6 * 2.0 * std::f64::consts::FRAC_PI_4.sin() - 0.2;
+        assert!((lo.z - (back - 10.0)).abs() < 1e-6 && hi.z > 0.0, "{lo:?}");
+        assert!((inner(&h, name) - 3.0).abs() < 1e-3, "{}", inner(&h, name));
+        let part = h.doc.parts.values().next().cloned();
+        assert_eq!(part.as_ref().and_then(|p| p.hub_diameter), Some(12.0));
+        assert_eq!(part.as_ref().and_then(|p| p.hub_length), Some(10.0));
+        // By default a bearing's bore (as the library lists it), and a bore within it.
+        let l = run(&mut Session::default(), "parts.library", json!({"family": "bevel_gear_m2"}));
+        let rows = l["sizes"].as_array().cloned().unwrap_or_default();
+        assert!(!rows.is_empty());
+        for r in &rows {
+            let (hub, bore) = (r["hub_diameter"].as_f64().unwrap_or(0.0), r["bore"].as_f64().unwrap_or(0.0));
+            assert!(super::BEARING_BORES.contains(&hub) && bore <= hub / 2.0 + 1e-9, "{r}");
+        }
+        // Too wide for the back, a bore that leaves no wall, a hub on a spur gear: refused.
+        for bad in [
+            json!({"family": "bevel_gear_m2", "size": "15:15", "hub_diameter": 40}),
+            json!({"family": "bevel_gear_m2", "size": "15:15", "hub_diameter": 12, "bore": 11}),
+            json!({"family": "bevel_gear_m2", "size": "15:15", "hub_length": -1}),
+            json!({"family": "spur_gear_m2", "size": "20", "hub_diameter": 12}),
+        ] {
+            assert!(Session::default().execute("parts.insert", &bad).is_err(), "{bad}");
+        }
+        // A pair: the pinion with no hub, the gear on a 25 mm seat.
+        let mut p = Session::default();
+        run(&mut p, "parts.insert", json!({"family": "bevel_pair_m2", "size": "20:40", "hub_length": 0, "mate_hub_diameter": 25}));
+        assert!(p.model.results.iter().all(|r| r.error.is_none()));
+        let of = |size: &str| p.doc.parts.values().find(|x| x.size == size).cloned();
+        assert_eq!(of("20:40").and_then(|x| x.hub_length), Some(0.0));
+        assert_eq!(of("40:20").and_then(|x| x.hub_diameter), Some(25.0));
+        assert_eq!(of("20:40").and_then(|x| x.hub_diameter), None);
     }
 
     /// Sets go in meshing: a bevel pair and a planetary set leave their teeth touching but not

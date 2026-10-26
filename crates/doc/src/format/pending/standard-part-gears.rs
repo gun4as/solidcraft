@@ -11,6 +11,7 @@
 //! with it: `bore` (mm), a helical gear's `helix` angle (radians, negative: left hand), a worm
 //! wheel's worm `starts`, a gear's `pressure_angle` (radians), `profile_shift` (coefficient),
 //! `backlash`, `root_fillet` and `tip_fillet` (mm) and `offset_hole` ([distance, diameter], mm),
+//! a bevel gear's `hub_diameter` and `hub_length` (mm),
 //! a screw's `drive` (`hex`, `hexalobular`, `cross`, `slot`) and `modeled_thread` (the thread cut
 //! into the part rather than cosmetic); none: the size's or the family's default. Older designs
 //! need no transformation: they have no such parts, and no other part takes these fields. The

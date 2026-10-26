@@ -3158,5 +3158,10 @@
   "Root fillet": "齿根圆角",
   "Tip fillet": "齿顶圆角",
   "Offset hole at": "偏心孔位置",
-  "Offset hole Ø": "偏心孔直径"
+  "Offset hole Ø": "偏心孔直径",
+  "Hub Ø (seat)": "轮毂直径（轴承座）",
+  "Hub length": "轮毂长度",
+  "Mate's bore": "配对齿轮孔径",
+  "Mate's hub Ø": "配对齿轮轮毂直径",
+  "Mate's hub length": "配对齿轮轮毂长度"
 }
