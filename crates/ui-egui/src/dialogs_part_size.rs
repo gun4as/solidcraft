@@ -48,6 +48,8 @@ pub struct Resize {
     original_size: usize,
     family: Family,
     source: Arc<Document>,
+    /// The diameters the fields give (gears, worms, pulleys).
+    dia: crate::dialogs_parts::Diameters,
 }
 
 impl std::fmt::Debug for Resize {
@@ -138,6 +140,7 @@ impl Resize {
             opt,
             family,
             source: app.session.doc.clone(),
+            dia: crate::dialogs_parts::Diameters::default(),
         })
     }
 
@@ -198,6 +201,14 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Resize) -> bool {
     }
     let family = k.family.clone();
     k.opt.rows(ui, &family);
+    let made = k.family.sizes.get(k.size).and_then(|(size, _)| {
+        let mut p = json!({"family": k.family.id, "size": size});
+        if let Some(l) = k.length {
+            p["length"] = json!(l);
+        }
+        k.opt.params(&k.family, &mut p, false).ok().map(|()| p)
+    });
+    crate::dialogs_parts::diameter_rows(app, ui, &mut k.dia, made);
     if let Some((size, _)) = k.family.sizes.get(k.size) {
         row(ui, "Configuration", |ui| {
             ui.label(configuration_name(size, k.length));

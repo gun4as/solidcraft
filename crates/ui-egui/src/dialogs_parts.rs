@@ -134,6 +134,8 @@ pub struct Pt {
     pub query: String,
     pub hits: Vec<Hit>,
     pub hits_for: String,
+    /// The diameters the fields give (gears, worms, pulleys).
+    pub dia: Diameters,
 }
 
 impl Pt {
@@ -146,6 +148,7 @@ impl Pt {
             lib: None,
             cats: Vec::new(),
             gears,
+            dia: Diameters::default(),
             opt: Box::default(),
             series: String::new(),
             query: String::new(),
@@ -368,6 +371,44 @@ impl Options {
         if takes("mate_hub_length") {
             text_row(ui, "Mate's hub length", &mut self.mate_hub_length, "automatic");
         }
+    }
+}
+
+/// A gear's, worm's or pulley's diameters as its fields make it (`parts.dimensions`), worked out
+/// again only when the fields change.
+#[derive(Clone, Debug, Default)]
+pub struct Diameters {
+    of: String,
+    values: Option<Value>,
+}
+
+impl Diameters {
+    fn get(&mut self, app: &SolveApp, p: &Value) -> Option<&Value> {
+        let of = p.to_string();
+        if of != self.of {
+            self.values = app.session.scratch().execute("parts.dimensions", p).ok();
+            self.of = of;
+        }
+        self.values.as_ref()
+    }
+}
+
+/// The diameters `p` (a part's family, size, length and options) gives: pitch, outside, root
+/// and base (a bevel gear's cone angle); nothing for a part without teeth.
+pub fn diameter_rows(app: &SolveApp, ui: &mut egui::Ui, d: &mut Diameters, p: Option<Value>) {
+    let Some(v) = p.and_then(|p| d.get(app, &p).cloned()) else { return };
+    for (key, label) in [
+        ("pitch_diameter", "Pitch diameter"),
+        ("outside_diameter", "Outside diameter"),
+        ("root_diameter", "Root diameter"),
+        ("base_diameter", "Base diameter"),
+    ] {
+        if let Some(x) = v.get(key).and_then(Value::as_f64) {
+            form_row(ui, label, |ui| crate::ui_kit::text(ui, &crate::prefs::show_mm(app, x, 3), crate::ui_kit::Text::Cell));
+        }
+    }
+    if let Some(a) = v.get("cone_angle").and_then(Value::as_f64) {
+        form_row(ui, "Cone angle", |ui| crate::ui_kit::text(ui, &format!("{a:.2}°"), crate::ui_kit::Text::Cell));
     }
 }
 
@@ -710,6 +751,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         });
     }
     k.opt.rows(ui, f);
+    // As made with the options above (the table below gives the size's defaults).
+    let made = if k.gears { insert_params(&lib, k, None).ok() } else { None };
+    diameter_rows(app, ui, &mut k.dia, made);
     text_row(ui, "Name", &mut k.name, "automatic");
     // The part (its picture follows every field that shapes it), and its table values.
     let shown = insert_params(&lib, k, None).ok().map_or(Shown::Missing, |p| picture(ui.ctx(), &p));
@@ -727,7 +771,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if let Some((_, row)) = f.sizes.get(k.size)
         && let Some(o) = row.as_object()
     {
-        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label")) {
+        // The diameters are shown above, as made.
+        let made = |key: &str| matches!(key, "pitch_diameter" | "outside_diameter" | "root_diameter" | "base_diameter" | "cone_angle");
+        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label") && !(k.gears && made(key))) {
             form_row(ui, &key.replace('_', " "), |ui| {
                 crate::ui_kit::text(
                     ui,

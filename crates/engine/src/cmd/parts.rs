@@ -21,6 +21,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("parts.library", "Standard Parts", library).icon("library")
         .noundo()
         .params("family? → families (name, standard, group, category, sizes, lengths, options) and categories (name, group, a sample part); with family, each size's dimensions (mm)"),
+    CommandSpec::new("parts.dimensions", "Gear Dimensions", dimensions).icon("gear")
+        .noundo()
+        .params("family, size, length?, and the options parts.insert takes → a gear's, worm's or pulley's diameters as made (mm): pitch_diameter, outside_diameter, root_diameter, base_diameter (involute gears); a ring gear's outside is across its teeth's tips, inside; a bevel gear's at its large end, with cone_angle (deg)"),
     CommandSpec::new("parts.fastener", "Insert Fastener", insert).at("SOLID", "INSERT").icon("fastener").params(
         "the Insert Part dialog's command (same as parts.insert): family, size, length?, at?|point?+direction?, name?",
     ),
@@ -2679,6 +2682,46 @@ fn standard_part(family: &str, size: &str, sh: &Shape, bore: Option<f64>, extra:
     }
 }
 
+/// A gear's, worm's or pulley's diameters as `parts.insert` would make it (`parts.dimensions`).
+fn dimensions(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "parts.dimensions";
+    let family = str_(p, "family").ok_or_else(|| bad(cmd, "`family` is required (parts.library)"))?.to_string();
+    let size = str_(p, "size").ok_or_else(|| bad(cmd, "`size` is required"))?.to_string();
+    let bore = bore_param(p, cmd)?;
+    let extra = extra_params(s, p, cmd)?;
+    let sh = shape(&family, &size, length_param(p, cmd)?, extra).and_then(|sh| with_bore(sh, bore)).map_err(|e| bad(cmd, e))?;
+    shape_diameters(&sh).ok_or_else(|| bad(cmd, "only gears, worms and pulleys have these diameters"))
+}
+
+/// The diameters of a gear's, worm's or pulley's teeth (mm, to the micrometre).
+fn shape_diameters(sh: &Shape) -> Option<Value> {
+    let r = |v: f64| (v * 1000.0).round() / 1000.0;
+    Some(match *sh {
+        Shape::Gear { tooth, z, .. } => {
+            let pitch = 2.0 * tooth.pitch_radius(z);
+            json!({"pitch_diameter": r(pitch), "outside_diameter": r(2.0 * tooth.tip_radius(z)), "root_diameter": r(2.0 * tooth.root_radius(z)),
+                   "base_diameter": r(pitch * tooth.alpha.cos())})
+        }
+        // The tooth spaces are drawn as teeth: their roots are the ring's tips, inside.
+        Shape::RingGear { space, z, .. } => {
+            let pitch = 2.0 * space.pitch_radius(z);
+            json!({"pitch_diameter": r(pitch), "outside_diameter": r(2.0 * space.root_radius(z)), "root_diameter": r(2.0 * space.tip_radius(z)),
+                   "base_diameter": r(pitch * space.alpha.cos())})
+        }
+        Shape::Bevel { tooth, z, delta, .. } => {
+            let rp = tooth.pitch_radius(z);
+            json!({"pitch_diameter": r(2.0 * rp), "outside_diameter": r(tooth.outside_diameter(z)),
+                   "root_diameter": r(2.0 * (rp - 1.25 * tooth.m * (delta + BevelTooth::LEAN).cos())), "cone_angle": r(delta.to_degrees())})
+        }
+        Shape::Worm { m, d1, .. } => json!({"pitch_diameter": r(d1), "outside_diameter": r(d1 + 2.0 * m), "root_diameter": r(d1 - 2.5 * m)}),
+        Shape::Pulley { p, pld, depth, z, .. } => {
+            let pitch = f64::from(z) * p / std::f64::consts::PI;
+            json!({"pitch_diameter": r(pitch), "outside_diameter": r(pitch - 2.0 * pld), "root_diameter": r(pitch - 2.0 * pld - 2.0 * depth)})
+        }
+        _ => return None,
+    })
+}
+
 fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parts.insert (Insert Fastener)";
     let family = str_(p, "family").ok_or_else(|| bad(cmd, "`family` is required (parts.library)"))?.to_string();
@@ -3478,6 +3521,30 @@ mod tests {
         let (lo, hi) = bbox(&s, "SHCS M8x25");
         assert!((hi.z - 18.0).abs() < 1e-6 && (lo.z + 15.0).abs() < 1e-6, "{lo:?} {hi:?}");
         assert!(s.model.state().threads.iter().any(|t| t.designation == "M8" && (t.pitch - 1.25).abs() < 1e-9));
+    }
+
+    /// The diameters a gear is made with, as the dialogs show them: an ISO 53 spur gear's pitch
+    /// m z, tip m (z + 2 + 2x), root m (z − 2.5 + 2x), base m z cos 20°; a ring gear's tips
+    /// inside; a bevel gear's at its large end with its cone angle; a pulley's pitch and outside.
+    #[test]
+    fn parts_dimensions_are_the_gears_as_made() {
+        let dims = |p: Value| run(&mut Session::default(), "parts.dimensions", p);
+        let near = |v: &Value, key: &str, want: f64| (v[key].as_f64().unwrap_or(f64::NAN) - want).abs() < 1e-3;
+        let d = dims(json!({"family": "spur_gear_m2", "size": "20"}));
+        assert!(near(&d, "pitch_diameter", 40.0) && near(&d, "outside_diameter", 44.0) && near(&d, "root_diameter", 35.0), "{d}");
+        assert!(near(&d, "base_diameter", 40.0 * 20f64.to_radians().cos()), "{d}");
+        // A profile shift of +0.5 moves tip and root out by a module.
+        let d = dims(json!({"family": "spur_gear_m2", "size": "20", "profile_shift": 0.5}));
+        assert!(near(&d, "pitch_diameter", 40.0) && near(&d, "outside_diameter", 46.0) && near(&d, "root_diameter", 37.0), "{d}");
+        let d = dims(json!({"family": "ring_gear_m1", "size": "40"}));
+        assert!(near(&d, "pitch_diameter", 40.0) && near(&d, "outside_diameter", 38.0) && near(&d, "root_diameter", 42.5), "{d}");
+        let d = dims(json!({"family": "bevel_gear_m2", "size": "20:40"}));
+        let delta = 0.5f64.atan();
+        let od = 40.0 + 4.0 * (delta + 2f64.to_radians()).cos();
+        assert!(near(&d, "pitch_diameter", 40.0) && near(&d, "outside_diameter", od) && near(&d, "cone_angle", delta.to_degrees()), "{d}");
+        let d = dims(json!({"family": "pulley_gt2", "size": "20"}));
+        assert!(near(&d, "pitch_diameter", 40.0 / std::f64::consts::PI) && d["outside_diameter"].as_f64() < d["pitch_diameter"].as_f64(), "{d}");
+        assert!(Session::default().execute("parts.dimensions", &json!({"family": "bearing", "size": "608"})).is_err());
     }
 
     /// A bearing goes in from the picked rim: into a housing's bore, flush with its face, or along
