@@ -37,7 +37,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          hub_diameter?, hub_length?: mm (bevel gears: the hub behind the back, a bearing's seat; default the largest \
          bearing bore within the small end's roots, as long as the face is wide; length 0: no hub); \
          mate_bore?, mate_hub_diameter?, mate_hub_length? (a bevel pair: the gear's, the others the pinion's); \
-         at?: [x,y,z] on a hole's rim or wall (the part seats on the hole's face with a rigid joint) | point?: [x,y,z] with direction?: [x,y,z] (no joint); name?",
+         at?: [x,y,z] on a hole's rim or wall (the part seats on the hole's face with a rigid joint; a bearing goes in from the rim, into a hole or along a shaft or hub) | point?: [x,y,z] with direction?: [x,y,z] (no joint); name?",
     ),
     CommandSpec::new("parts.resize", "Change Part Size", resize_atomic).icon("scale")
         .params("component: id|name of an inserted part; size?; length?; bore? (gears, worms, pulleys); helix_angle?; starts?; hub_diameter?, hub_length? (bevel gears) — rebuilds it (joints keep it seated)"),
@@ -2709,11 +2709,14 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = json!({"component": comp, "occurrence": occ, "name": name});
     if let (Some(a), Some(h)) = (at, host) {
         // Seat it: its axis on the hole's, its seating plane on the hole's face, the shank going
-        // into the hole (the joint mates the part's −z with the face's outward z).
+        // into the hole (the joint mates the part's −z with the face's outward z). A bearing
+        // (built up from its face) goes in from the rim instead: into a hole, or along a shaft or
+        // hub up to its shoulder.
+        let z = if family == "bearing" { [0, 0, 1] } else { [0, 0, -1] };
         let j = run(
             s,
             "joint.create",
-            json!({"type": "rigid", "a": {"occurrence": h, "circle": a}, "b": {"occurrence": occ, "point": [0, 0, 0], "z": [0, 0, -1]}, "name": format!("{name} seat")}),
+            json!({"type": "rigid", "a": {"occurrence": h, "circle": a}, "b": {"occurrence": occ, "point": [0, 0, 0], "z": z}, "name": format!("{name} seat")}),
         )?;
         out["joint"] = j["joint"].clone();
     } else if let Some(pt) = p.get("point").and_then(vec3) {
@@ -2736,7 +2739,8 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// A point on the cylindrical wall of the hole at `a`, a little in from the picked rim.
 fn hole_wall(s: &Session, a: Vec3) -> Option<Vec3> {
-    let st = s.model.state();
+    // Where the bodies are: a part placed turned or moved has its walls there, not at home.
+    let st = s.world_state();
     let dirs = [Vec3::Z * -1.0, Vec3::Z, Vec3::X, Vec3::X * -1.0, Vec3::Y, Vec3::Y * -1.0];
     for step in [0.2, 0.5, 1.0, 2.0] {
         for b in &st.bodies {
@@ -3463,6 +3467,32 @@ mod tests {
         let (lo, hi) = bbox(&s, "SHCS M8x25");
         assert!((hi.z - 18.0).abs() < 1e-6 && (lo.z + 15.0).abs() < 1e-6, "{lo:?} {hi:?}");
         assert!(s.model.state().threads.iter().any(|t| t.designation == "M8" && (t.pitch - 1.25).abs() < 1e-9));
+    }
+
+    /// A bearing goes in from the picked rim: into a housing's bore, flush with its face, or along
+    /// a hub up to its shoulder, on a part placed turned (a bevel pair's gear) as on one at home.
+    #[test]
+    fn a_bearing_goes_into_a_bore_or_onto_a_hub() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": "Plate"}));
+        run(&mut s, "solid.hole", json!({"position": [20, 15, 10], "diameter": 22}));
+        run(&mut s, "parts.insert", json!({"family": "bearing", "size": "608", "at": [31, 15, 10]}));
+        let (lo, hi) = bbox(&s, "Bearing 608");
+        // 608: 8 × 22 × 7, in the bore from its top face down.
+        assert!((hi.z - 10.0).abs() < 1e-6 && (lo.z - 3.0).abs() < 1e-6, "{lo:?} {hi:?}");
+        assert!(((lo.x + hi.x) / 2.0 - 20.0).abs() < 1e-6 && (hi.x - lo.x - 22.0).abs() < 1e-6, "{lo:?} {hi:?}");
+        // The gear of a bevel pair m2 20:40 (its axis along −x through (20, 0, 40)) on a 20 mm hub:
+        // its back at local z −1.6 m sin δ2 − 0.2, so x 23.06; a 6804 (20 × 32 × 7) picked on the
+        // hub's rim there goes along the hub, away from the gear.
+        let mut g = Session::default();
+        run(&mut g, "parts.insert", json!({"family": "bevel_pair_m2", "size": "20:40", "mate_hub_diameter": 20}));
+        let back = 20.0 + 1.6 * 2.0 * 2f64.atan().sin() + 0.2;
+        let r = run(&mut g, "parts.insert", json!({"family": "bearing", "size": "6804", "at": [back, 10, 40]}));
+        assert!(r["joint"].is_number(), "{r}");
+        let (lo, hi) = bbox(&g, "Bearing 6804");
+        assert!((lo.x - back).abs() < 1e-6 && (hi.x - back - 7.0).abs() < 1e-6, "{lo:?} {hi:?}");
+        // (Across it the bounds are its mesh's, a hair inside the circle.)
+        assert!(((lo.z + hi.z) / 2.0 - 40.0).abs() < 0.05 && (hi.z - lo.z - 32.0).abs() < 0.05, "{lo:?} {hi:?}");
     }
 
     #[test]
