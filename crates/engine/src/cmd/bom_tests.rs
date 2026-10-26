@@ -159,10 +159,7 @@ fn standard_parts_carry_a_part_number_that_follows_a_resize() {
         .iter()
         .map(|r| (r["part_number"].as_str().unwrap().into(), r["description"].as_str().unwrap().into(), r["count"].as_u64().unwrap()))
         .collect();
-    assert_eq!(
-        rows,
-        [("608".into(), "Deep groove ball bearing 608".into(), 1), ("ISO 4762 M6x20".into(), "Socket head cap screw M6x20".into(), 2)]
-    );
+    assert_eq!(rows, [("608".into(), "Deep groove ball bearing 608".into(), 1), ("ISO 4762 M6x20".into(), "Socket head cap screw M6x20".into(), 2)]);
     let screws = r["rows"].as_array().unwrap().iter().find(|r| r["count"] == 2).cloned().unwrap();
     assert_eq!(screws["definition"], "SHCS M6x20", "equal names are named once");
     assert_eq!(screws["components"].as_array().map(Vec::len), Some(2));

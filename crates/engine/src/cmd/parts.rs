@@ -2713,11 +2713,22 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         // (built up from its face) goes in from the rim instead: into a hole, or along a shaft or
         // hub up to its shoulder.
         let z = if family == "bearing" { [0, 0, 1] } else { [0, 0, -1] };
+        // The solver places only what is joined to something grounded (or to the first joint's
+        // part): a part joined to nothing such (a bevel pair's gear) holds still while the joint
+        // seats this one on it, then is let go again where it is.
+        let hold = h != 0 && s.doc.occurrences.iter().any(|o| o.id == h && !o.grounded);
+        if hold {
+            run(s, "occurrence.ground", json!({"occurrence": h, "grounded": true}))?;
+        }
         let j = run(
             s,
             "joint.create",
             json!({"type": "rigid", "a": {"occurrence": h, "circle": a}, "b": {"occurrence": occ, "point": [0, 0, 0], "z": z}, "name": format!("{name} seat")}),
-        )?;
+        );
+        if hold {
+            run(s, "occurrence.ground", json!({"occurrence": h, "grounded": false}))?;
+        }
+        let j = j?;
         out["joint"] = j["joint"].clone();
     } else if let Some(pt) = p.get("point").and_then(vec3) {
         // Placed at a point, its +z along `direction`.
@@ -3481,11 +3492,17 @@ mod tests {
         // 608: 8 × 22 × 7, in the bore from its top face down.
         assert!((hi.z - 10.0).abs() < 1e-6 && (lo.z - 3.0).abs() < 1e-6, "{lo:?} {hi:?}");
         assert!(((lo.x + hi.x) / 2.0 - 20.0).abs() < 1e-6 && (hi.x - lo.x - 22.0).abs() < 1e-6, "{lo:?} {hi:?}");
-        // The gear of a bevel pair m2 20:40 (its axis along −x through (20, 0, 40)) on a 20 mm hub:
-        // its back at local z −1.6 m sin δ2 − 0.2, so x 23.06; a 6804 (20 × 32 × 7) picked on the
-        // hub's rim there goes along the hub, away from the gear.
+        // A bevel pair m2 20:40: a 6003 (17 × 35 × 10) on the pinion's 17 mm hub, its back at
+        // z −1.6 m sin δ1 − 0.2, then the gear (its axis along −x through (20, 0, 40)) on a 20 mm
+        // hub, its back at x 20 + 1.6 m sin δ2 + 0.2 = 23.06: a 6804 (20 × 32 × 7) picked on the
+        // hub's rim there goes along the hub, away from the gear. The two are joined to nothing
+        // grounded nor to each other: each keeps its gear where it is.
         let mut g = Session::default();
         run(&mut g, "parts.insert", json!({"family": "bevel_pair_m2", "size": "20:40", "mate_hub_diameter": 20}));
+        let pinion_back = -(1.6 * 2.0 * 0.5f64.atan().sin() + 0.2);
+        run(&mut g, "parts.insert", json!({"family": "bearing", "size": "6003", "at": [8.5, 0, pinion_back]}));
+        let (lo, hi) = bbox(&g, "Bearing 6003");
+        assert!((hi.z - pinion_back).abs() < 1e-6 && (lo.z - pinion_back + 10.0).abs() < 1e-6, "{lo:?} {hi:?}");
         let back = 20.0 + 1.6 * 2.0 * 2f64.atan().sin() + 0.2;
         let r = run(&mut g, "parts.insert", json!({"family": "bearing", "size": "6804", "at": [back, 10, 40]}));
         assert!(r["joint"].is_number(), "{r}");
