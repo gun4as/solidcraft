@@ -23,7 +23,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("family? → families (name, standard, group, category, sizes, lengths, options) and categories (name, group, a sample part); with family, each size's dimensions (mm)"),
     CommandSpec::new("parts.dimensions", "Gear Dimensions", dimensions).icon("gear")
         .noundo()
-        .params("family, size, length?, and the options parts.insert takes → a gear's, worm's or pulley's diameters as made (mm): pitch_diameter, outside_diameter, root_diameter, base_diameter (involute gears); a ring gear's outside is across its teeth's tips, inside; a bevel gear's at its large end, with cone_angle (deg)"),
+        .params("family, size, length?, and the options parts.insert takes → a gear's, worm's or pulley's diameters as made (mm): pitch_diameter, outside_diameter, root_diameter, base_diameter (involute gears); a ring gear's outside is across its teeth's tips, inside; a bevel gear's at its large end, with cone_angle (deg); a set (bevel pair, worm drive, planetary): members, each different part's (with its family and size)"),
     CommandSpec::new("parts.fastener", "Insert Fastener", insert).at("SOLID", "INSERT").icon("fastener").params(
         "the Insert Part dialog's command (same as parts.insert): family, size, length?, at?|point?+direction?, name?",
     ),
@@ -2687,6 +2687,19 @@ fn dimensions(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parts.dimensions";
     let family = str_(p, "family").ok_or_else(|| bad(cmd, "`family` is required (parts.library)"))?.to_string();
     let size = str_(p, "size").ok_or_else(|| bad(cmd, "`size` is required"))?.to_string();
+    // A set: each different part of it, by its family and size.
+    if let Some((kind, m)) = set_family(&family) {
+        let mut members: Vec<Value> = Vec::new();
+        for (q, _) in set_members(kind, m, &size, length_param(p, cmd)?, p).map_err(|e| bad(cmd, e))? {
+            let mut d = dimensions(s, &q)?;
+            d["family"] = q["family"].clone();
+            d["size"] = q["size"].clone();
+            if !members.iter().any(|x| x["family"] == d["family"] && x["size"] == d["size"]) {
+                members.push(d);
+            }
+        }
+        return Ok(json!({"members": members}));
+    }
     let bore = bore_param(p, cmd)?;
     let extra = extra_params(s, p, cmd)?;
     let sh = shape(&family, &size, length_param(p, cmd)?, extra).and_then(|sh| with_bore(sh, bore)).map_err(|e| bad(cmd, e))?;
@@ -3545,6 +3558,13 @@ mod tests {
         let d = dims(json!({"family": "pulley_gt2", "size": "20"}));
         assert!(near(&d, "pitch_diameter", 40.0 / std::f64::consts::PI) && d["outside_diameter"].as_f64() < d["pitch_diameter"].as_f64(), "{d}");
         assert!(Session::default().execute("parts.dimensions", &json!({"family": "bearing", "size": "608"})).is_err());
+        // A set: each different part (the planets once), by its size.
+        let d = dims(json!({"family": "bevel_pair_m2", "size": "20:40"}));
+        let sizes: Vec<&str> = d["members"].as_array().map_or(Vec::new(), |m| m.iter().filter_map(|x| x["size"].as_str()).collect());
+        assert_eq!(sizes, ["20:40", "40:20"], "{d}");
+        assert!(near(&d["members"][1], "pitch_diameter", 80.0), "{d}");
+        let d = dims(json!({"family": "planetary_m1", "size": "12-18-48/3"}));
+        assert_eq!(d["members"].as_array().map(Vec::len), Some(3), "{d}");
     }
 
     /// A bearing goes in from the picked rim: into a housing's bore, flush with its face, or along

@@ -397,6 +397,18 @@ impl Diameters {
 /// and base (a bevel gear's cone angle); nothing for a part without teeth.
 pub fn diameter_rows(app: &SolveApp, ui: &mut egui::Ui, d: &mut Diameters, p: Option<Value>) {
     let Some(v) = p.and_then(|p| d.get(app, &p).cloned()) else { return };
+    // A set: each of its parts under its size (a bevel pair's 20:40 and 40:20).
+    if let Some(members) = v.get("members").and_then(Value::as_array) {
+        for m in members {
+            crate::ui_kit::text(ui, m["size"].as_str().unwrap_or(""), crate::ui_kit::Text::Note("parts_member"));
+            member_rows(app, ui, m);
+        }
+        return;
+    }
+    member_rows(app, ui, &v);
+}
+
+fn member_rows(app: &SolveApp, ui: &mut egui::Ui, v: &Value) {
     for (key, label) in [
         ("pitch_diameter", "Pitch diameter"),
         ("outside_diameter", "Outside diameter"),
@@ -404,7 +416,7 @@ pub fn diameter_rows(app: &SolveApp, ui: &mut egui::Ui, d: &mut Diameters, p: Op
         ("base_diameter", "Base diameter"),
     ] {
         if let Some(x) = v.get(key).and_then(Value::as_f64) {
-            form_row(ui, label, |ui| crate::ui_kit::text(ui, &crate::prefs::show_mm(app, x, 3), crate::ui_kit::Text::Cell));
+            form_row(ui, label, |ui| crate::ui_kit::text(ui, &crate::prefs::show_mm(app, x, 1), crate::ui_kit::Text::Cell));
         }
     }
     if let Some(a) = v.get("cone_angle").and_then(Value::as_f64) {
