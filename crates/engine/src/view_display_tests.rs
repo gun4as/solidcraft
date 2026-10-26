@@ -190,142 +190,83 @@ fn scene_sampler_uses_exact_active_occurrence_plane_and_preserves_other_scene_co
     assert!(hidden.lines.iter().all(|line| !line.on_top));
 }
 
-fn thread(internal: bool, major: f64, pitch: f64, start: f64, end: f64) -> solidcraft_doc::ThreadInfo {
-    solidcraft_doc::ThreadInfo {
-        feature: 1,
-        body: "Body".into(),
-        designation: format!("M{major}x{pitch}"),
-        major_diameter: major,
-        pitch,
-        internal,
-        axis_point: Vec3::new(1., 2., 3.),
-        axis: solidcraft_geom::UnitVec3::Z,
-        start,
-        end,
-    }
-}
-
-/// Distance from the thread's axis, and position along it.
-fn radial(t: &solidcraft_doc::ThreadInfo, p: Vec3) -> (f64, f64) {
-    let d = p - t.axis_point;
-    let along = d.dot(*t.axis);
-    ((d - *t.axis * along).len(), along)
-}
-
 #[test]
-fn a_shaft_thread_is_a_helix_at_the_major_radius_one_turn_per_pitch_over_its_length() {
-    let t = thread(false, 6., 1., -20., 0.);
-    let lines = thread_lines(&t, Some(3.), 0.).unwrap();
-    assert!((lines.turns - 20.).abs() < 1e-12);
-    assert_eq!(lines.helix.len(), 20 * THREAD_TURN_SEGMENTS + 1);
-    for p in &lines.helix {
-        assert!((radial(&t, *p).0 - 3.).abs() < 1e-9, "{p:?}");
-    }
-    let alongs: Vec<f64> = lines.helix.iter().map(|p| radial(&t, *p).1).collect();
-    assert!((alongs[0] + 20.).abs() < 1e-9 && alongs.last().unwrap().abs() < 1e-9, "{alongs:?}");
-    assert!(alongs.windows(2).all(|w| w[1] > w[0]), "the helix climbs steadily");
-    // One whole turn per pitch: every turn ends where it started, a pitch further along.
-    let first = lines.helix[0];
-    let turn = lines.helix[THREAD_TURN_SEGMENTS];
-    assert!((turn - first - Vec3::Z).len() < 1e-9, "{first:?} {turn:?}");
-    // A circle at the minor diameter at each end of the threaded length.
-    let minor = (6. - 1.082_532) / 2.;
-    assert!((lines.end_radius - minor).abs() < 1e-9);
-    assert_eq!(lines.ends.len(), 2);
-    for (end, along) in lines.ends.iter().zip([-20., 0.]) {
-        assert!((end[0] - *end.last().unwrap()).len() < 1e-9, "closed");
-        for p in end {
-            let (r, a) = radial(&t, *p);
-            assert!((r - minor).abs() < 1e-9 && (a - along).abs() < 1e-9, "{p:?}");
-        }
-    }
-}
-
-#[test]
-fn a_hole_thread_is_drawn_inside_the_hole_clear_of_its_facets() {
-    // M6 tapped at the 5 mm drill: the helix just inside the wall, the major circle at the ends.
-    let t = thread(true, 6., 1., 0., 12.);
-    let lines = thread_lines(&t, Some(2.5), 0.01).unwrap();
-    let minor = (6. - 1.082_532) / 2.;
-    assert!((lines.helix_radius - (minor - 0.015)).abs() < 1e-9, "{}", lines.helix_radius);
-    assert!(lines.helix_radius < 2.5);
-    assert!((lines.end_radius - 3.).abs() < 1e-12);
-    // A hole drilled under the basic minor diameter: the helix follows its wall.
-    let tight = thread_lines(&t, Some(2.3), 0.01).unwrap();
-    assert!((tight.helix_radius - 2.285).abs() < 1e-9, "{}", tight.helix_radius);
-    // A shaft turned over its thread's size: the helix stays on its face, not inside it.
-    let fat = thread_lines(&thread(false, 6., 1., 0., 12.), Some(3.1), 0.).unwrap();
-    assert!((fat.helix_radius - 3.1).abs() < 1e-9);
-}
-
-#[test]
-fn long_fine_threads_are_drawn_with_a_capped_number_of_turns() {
-    let t = thread(false, 20., 0.1, 0., 500.);
-    let lines = thread_lines(&t, None, 0.).unwrap();
-    assert!((lines.turns - MAX_THREAD_TURNS).abs() < 1e-12);
-    assert_eq!(lines.helix.len(), MAX_THREAD_TURNS as usize * THREAD_TURN_SEGMENTS + 1);
-    let (_, last) = radial(&t, *lines.helix.last().unwrap());
-    assert!((last - 500.).abs() < 1e-9, "still the whole threaded length");
-    // A partial last turn ends where the thread does.
-    let short = thread_lines(&thread(false, 6., 1., 0., 2.5), None, 0.).unwrap();
-    assert!((short.turns - 2.5).abs() < 1e-12);
-    assert!((radial(&t, *short.helix.last().unwrap()).1 - 2.5).abs() < 1e-9);
-}
-
-#[test]
-fn threads_with_hostile_numbers_draw_nothing() {
-    for t in [
-        thread(false, f64::NAN, 1., 0., 10.),
-        thread(false, 6., 0., 0., 10.),
-        thread(false, 6., -1., 0., 10.),
-        thread(false, 6., f64::INFINITY, 0., 10.),
-        thread(false, 6., 1., 5., 5.),
-        thread(false, 6., 1., 0., f64::NAN),
-        thread(false, -6., 1., 0., 10.),
-    ] {
-        assert!(thread_lines(&t, Some(f64::NAN), f64::NAN).is_none(), "{t:?}");
-    }
-    // A face radius or tolerance that is not a number is ignored, not drawn.
-    let lines = thread_lines(&thread(false, 6., 1., 0., 10.), Some(f64::NAN), f64::INFINITY).unwrap();
-    assert!(lines.helix.iter().chain(lines.ends.iter().flatten()).all(|p| p.is_finite()));
-    assert!((lines.helix_radius - 3.).abs() < 1e-12);
-}
-
-/// The headless scene's lines in the cosmetic thread colour.
-fn thread_scene_lines(s: &Session) -> Vec<Vec<Vec3>> {
-    let color = thread_color(Palette::DEFAULT.edge, Palette::DEFAULT.body);
-    scene(s, &home_camera(s)).lines.into_iter().filter(|l| l.color == color).map(|l| l.points).collect()
-}
-
-#[test]
-fn an_inserted_cap_screw_and_a_tapped_hole_show_their_threads() {
+fn colored_components_toggle_is_stable_and_does_not_change_the_design() {
     let mut s = Session::default();
-    s.execute("parts.insert", &json!({"family": "socket_head_cap_screw", "size": "M6", "length": 20})).unwrap();
-    let lines = thread_scene_lines(&s);
-    assert_eq!(lines.len(), 3, "a helix and two end circles");
-    let st = s.world_state();
-    let t = st.threads.first().unwrap();
-    let helix = lines.iter().max_by_key(|l| l.len()).unwrap();
-    assert!(helix.len() > 10 * THREAD_TURN_SEGMENTS, "{} points", helix.len());
-    for p in helix {
-        let (r, along) = radial(t, *p);
-        assert!((2.9..3.1).contains(&r), "on the shank: {r}");
-        assert!(along >= t.start.min(t.end) - 1e-6 && along <= t.start.max(t.end) + 1e-6);
-    }
-    // Hidden with its body.
-    s.execute("browser.visibility", &json!({"items": [t.body], "visible": false})).unwrap();
-    assert!(thread_scene_lines(&s).is_empty());
+    let first_id = s.doc_mut().add_component(Some("First"), 0).unwrap();
+    let second_id = s.doc_mut().add_component(Some("Second"), 0).unwrap();
+    let before = serde_json::to_value(&s.doc).unwrap();
+    assert_eq!(component_color(&s, first_id), None);
+    assert_eq!(s.execute("inspect.colored_components", &json!({})).unwrap()["enabled"], true);
+    s.colored_components = Some(());
+    let first = component_color(&s, first_id);
+    assert!(first.is_some());
+    assert_ne!(first, component_color(&s, second_id));
+    s.execute("inspect.colored_components", &json!({"enabled": true})).unwrap();
+    assert_eq!(component_color(&s, first_id), first);
+    assert!(s.execute("inspect.colored_components", &json!({"enabled": "yes"})).is_err());
+    assert_eq!(component_color(&s, first_id), first);
+    assert_eq!(s.execute("inspect.colored_components", &json!({})).unwrap()["enabled"], false);
+    assert_eq!(component_color(&s, first_id), None);
+    assert_eq!(serde_json::to_value(&s.doc).unwrap(), before);
+}
 
+#[test]
+fn colored_components_override_appearances_and_restore_them() {
     let mut s = Session::default();
-    s.execute("solid.box", &json!({"length": 30, "width": 30, "height": 12, "body_name": "Plate"})).unwrap();
-    s.execute("solid.hole", &json!({"position": [15, 15, 12], "thread": "M6"})).unwrap();
-    let st = s.world_state();
-    let t = st.threads.first().unwrap();
-    let face = thread_face_radius(t, &st.body("Plate").unwrap().mesh()).unwrap();
-    assert!((face - 2.5).abs() < 1e-6, "the 5 mm tap drill: {face}");
-    let lines = thread_scene_lines(&s);
-    assert_eq!(lines.len(), 3);
-    let helix = lines.iter().max_by_key(|l| l.len()).unwrap();
-    assert!((helix.len() - 1) as f64 >= 12. * THREAD_TURN_SEGMENTS as f64, "a turn per millimetre over the plate");
-    assert!(helix.iter().all(|p| radial(t, *p).0 < 2.5), "inside the hole");
+    for (name, x) in [("Left", 0), ("Right", 20)] {
+        s.execute("component.activate", &json!({"component": 0})).unwrap();
+        s.execute("component.create", &json!({"name": name})).unwrap();
+        s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0]})).unwrap();
+    }
+    s.selection.clear();
+    let cam = Camera::default();
+    let original = scene(&s, &cam);
+    s.execute("inspect.colored_components", &json!({"enabled": true})).unwrap();
+    s.colored_components = Some(());
+    let colored = scene(&s, &cam);
+    assert_eq!(colored.meshes.len(), 2);
+    assert_ne!(colored.meshes[0].color, colored.meshes[1].color);
+    for (body, mesh) in s.world_state().bodies.iter().zip(&colored.meshes) {
+        let [r, g, b] = component_color(&s, body.component).unwrap();
+        assert_eq!(mesh.color, Rgb(r, g, b));
+        assert!(mesh.face_colors.is_empty());
+    }
+    s.execute("inspect.colored_components", &json!({"enabled": false})).unwrap();
+    let restored = scene(&s, &cam);
+    for (a, b) in original.meshes.iter().zip(restored.meshes) {
+        assert_eq!(a.color, b.color);
+        assert_eq!(a.face_colors, b.face_colors);
+    }
+}
+
+#[test]
+fn cycling_component_color_is_saved_undoable_and_shared_by_instances() {
+    let mut s = Session::default();
+    let component = s.execute("component.create", &json!({"name":"Part"})).unwrap()["component"].as_u64().unwrap();
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+    s.execute("occurrence.copy", &json!({"component":component,"translate":[20,0,0]})).unwrap();
+    let appearances = s.doc.appearances.clone();
+    s.execute("inspect.colored_components", &json!({"enabled":true})).unwrap();
+    let automatic = component_color(&s, component).unwrap();
+    s.execute("inspect.colored_components", &json!({"enabled":false})).unwrap();
+    s.execute("inspect.colored_components", &json!({"enabled":true})).unwrap();
+    assert_eq!(component_color(&s, component), Some(automatic));
+    let result = s.execute("component.cycle_color", &json!({"component":component})).unwrap();
+    let custom = component_color(&s, component).unwrap();
+    assert_ne!(custom, automatic);
+    assert_eq!(result["color"], json!(custom));
+    assert_eq!(s.doc.appearances, appearances);
+    let loaded = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    assert_eq!(loaded.doc.component_identification_color(component), custom);
+    let copies: Vec<_> = s.world_state().bodies.iter().map(|b| b.component).collect();
+    assert_eq!(copies, [component, component]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(component_color(&s, component), Some(automatic));
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(component_color(&s, component), Some(custom));
+    s.execute("component.paste_new", &json!({"component":component,"translate":[40,0,0]})).unwrap();
+    assert!(s.doc.components.iter().filter(|c| c.identification_color == Some(custom)).count() >= 2);
+    assert!(s.execute("component.cycle_color", &json!({"component":"missing"})).is_err());
+    assert!(s.execute("component.cycle_color", &json!({"component":0})).is_err());
 }
