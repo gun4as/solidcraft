@@ -16,7 +16,9 @@ use solidcraft_engine::io::vfs;
 use crate::disk;
 use wasm_bindgen::{JsCast as _, JsValue, closure::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
-use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetFileOptions, FileSystemWritableFileStream};
+use web_sys::{
+    FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetDirectoryOptions, FileSystemGetFileOptions, FileSystemWritableFileStream,
+};
 
 /// Where OPFS files appear to the engine.
 pub const OPFS: &str = disk::OPFS_PREFIX;
@@ -24,11 +26,13 @@ pub const OPFS: &str = disk::OPFS_PREFIX;
 pub const DOWNLOADS: &str = disk::DOWNLOADS_PREFIX;
 /// Files brought in from the computer.
 pub const UPLOAD: &str = "/upload/";
-/// The autosave of unsaved work (in OPFS: `recovery.solidcraft` and `recovery.json`).
-const RECOVERY: &str = "recovery.solidcraft";
-/// The autosave earlier releases kept (compatibility shim, docs/compatibility.md): recovered
-/// when there is no current one.
-const LEGACY_RECOVERY: &str = "recovery.solvecraft";
+/// The autosave of unsaved work (in OPFS: `recovery.sc` and `recovery.json`), named with
+/// `solidcraft_engine::io::DESIGN_EXT`.
+const RECOVERY: &str = "recovery.sc";
+/// The autosaves earlier releases kept, newest first, one per entry of
+/// `solidcraft_engine::io::LEGACY_DESIGN_EXTS` (compatibility shim, docs/compatibility.md): the
+/// newest is recovered when there is no current one.
+const LEGACY_RECOVERY: [&str; 2] = ["recovery.solidcraft", "recovery.solvecraft"];
 const RECOVERY_META: &str = "recovery.json";
 
 /// What to do with a file brought in from the computer.
@@ -38,6 +42,8 @@ pub enum Intent {
     Open,
     /// Add its bodies to the open design (STEP, 3MF, STL).
     Insert,
+    /// Import it as a theme: it was dropped on Preferences' Import tile (#8226).
+    Theme,
 }
 
 /// A stored design, as the file panel lists it.
@@ -107,7 +113,7 @@ thread_local! {
     static LOCAL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Local storage keys of stored files.
+/// Local storage keys of stored files (under the channel's name, see `channel.rs`).
 const LOCAL_PREFIX: &str = "solidcraft.file.";
 /// Local-storage files kept by earlier releases (compatibility shim, docs/compatibility.md):
 /// still listed and opened; removing one removes either key.
@@ -165,7 +171,17 @@ fn has(sm: &web_sys::StorageManager, method: &str) -> bool {
 async fn root() -> Result<FileSystemDirectoryHandle, String> {
     let sm = storage_manager().filter(|sm| has(sm, "getDirectory")).ok_or("this page has no private file storage (it needs https or localhost)")?;
     let dir = JsFuture::from(sm.get_directory()).await.map_err(err)?;
-    dir.dyn_into::<FileSystemDirectoryHandle>().map_err(|_| "this browser has no private file storage (OPFS)".to_string())
+    let dir = dir.dyn_into::<FileSystemDirectoryHandle>().map_err(|_| "this browser has no private file storage (OPFS)".to_string())?;
+    // Stable keeps its files in the root, where they have always been; a pre-release channel has a folder of its own.
+    match crate::channel::current() {
+        "" => Ok(dir),
+        channel => {
+            let opts = FileSystemGetDirectoryOptions::new();
+            opts.set_create(true);
+            let sub = JsFuture::from(dir.get_directory_handle_with_options(&format!("channel-{channel}"), &opts)).await.map_err(err)?;
+            sub.dyn_into::<FileSystemDirectoryHandle>().map_err(|_| "not a folder".to_string())
+        }
+    }
 }
 
 pub(crate) async fn read_handle(h: &FileSystemFileHandle) -> Result<Vec<u8>, String> {
@@ -187,7 +203,7 @@ async fn file_handle(dir: &FileSystemDirectoryHandle, name: &str, create: bool) 
 async fn write_file(name: &str, bytes: &[u8]) -> Result<(), String> {
     if local_only() {
         return local()?
-            .set_item(&format!("{LOCAL_PREFIX}{name}"), &encode(bytes))
+            .set_item(&crate::channel::key(&format!("{LOCAL_PREFIX}{name}")), &encode(bytes))
             .map_err(|e| format!("local storage is full or blocked: {}", err(e)));
     }
     let dir = root().await?;
@@ -203,7 +219,7 @@ async fn remove_file(name: &str) -> Result<(), String> {
     if local_only() {
         let st = local()?;
         st.remove_item(&format!("{LEGACY_LOCAL_PREFIX}{name}")).map_err(err)?;
-        return st.remove_item(&format!("{LOCAL_PREFIX}{name}")).map_err(err);
+        return st.remove_item(&crate::channel::key(&format!("{LOCAL_PREFIX}{name}"))).map_err(err);
     }
     let dir = root().await?;
     JsFuture::from(dir.remove_entry(name)).await.map_err(err)?;
@@ -216,7 +232,10 @@ fn read_local() -> Result<Vec<(String, Vec<u8>, f64)>, String> {
     let mut out = Vec::new();
     for i in 0..st.length().unwrap_or(0).min(10_000) {
         let Some(k) = st.key(i).ok().flatten() else { continue };
-        let Some(name) = k.strip_prefix(LOCAL_PREFIX).or_else(|| k.strip_prefix(LEGACY_LOCAL_PREFIX)) else { continue };
+        let own = crate::channel::key(LOCAL_PREFIX);
+        // The old names belong to stable; a pre-release channel has none.
+        let legacy = crate::channel::current().is_empty().then_some(LEGACY_LOCAL_PREFIX);
+        let Some(name) = k.strip_prefix(own.as_str()).or_else(|| legacy.and_then(|l| k.strip_prefix(l))) else { continue };
         if let Some(v) = st.get_item(&k).ok().flatten() {
             out.push((name.to_string(), decode(&v), 0.0));
         }
@@ -282,9 +301,10 @@ pub fn start(files: &Rc<Files>) {
                 }
                 let mut entries = Vec::new();
                 let has_recovery = all.iter().any(|(n, _, _)| n == RECOVERY);
+                let legacy = (!has_recovery).then(|| LEGACY_RECOVERY.into_iter().find(|l| all.iter().any(|(n, _, _)| n == l))).flatten();
                 for (name, bytes, modified) in all {
-                    if name == LEGACY_RECOVERY {
-                        if !has_recovery {
+                    if LEGACY_RECOVERY.contains(&name.as_str()) {
+                        if legacy == Some(name.as_str()) {
                             vfs::insert(&format!("{OPFS}{RECOVERY}"), bytes);
                         }
                         continue;
@@ -424,7 +444,9 @@ pub fn autosave(files: &Rc<Files>, doc: Option<(&solidcraft_engine::doc::Documen
         }
         None => spawn_local(async move {
             let _ = remove_file(RECOVERY).await;
-            let _ = remove_file(LEGACY_RECOVERY).await;
+            for legacy in LEGACY_RECOVERY {
+                let _ = remove_file(legacy).await;
+            }
             let _ = remove_file(RECOVERY_META).await;
         }),
     }
@@ -446,6 +468,18 @@ pub fn free_name(name: &str) -> String {
 /// The autosaved design's path (in the engine's files) for opening it.
 pub fn recovery_path() -> String {
     format!("{OPFS}{RECOVERY}")
+}
+
+/// A recovery file lives in OPFS, but its relative links belong to the original design's
+/// folder (which can be on disk). Resolve them before Open sees the temporary file location.
+pub fn prepare_recovery(original_path: Option<&str>) -> Result<String, String> {
+    let path = recovery_path();
+    let bytes = vfs::read(&path, solidcraft_engine::io::MAX_DESIGN_BYTES).map_err(|e| e.to_string())?;
+    let mut doc = solidcraft_engine::io::read_design(&bytes).map_err(|e| e.to_string())?;
+    solidcraft_engine::resolve_design_links(&mut doc, original_path);
+    let bytes = solidcraft_engine::io::write_design_container(&doc).map_err(|e| e.to_string())?;
+    vfs::insert(&path, bytes);
+    Ok(path)
 }
 
 /// Pick files on the computer: the File System Access picker where there is one, else an
@@ -501,9 +535,9 @@ fn input_picker(files: &Rc<Files>, intent: Intent) {
     input.set_type("file");
     // Everything the browser build imports, from the format registry: cadmpeg is pure Rust, so
     // FreeCAD and Rhino files are part of it; plus the DXF and SVG drawings Open and Insert take.
-    let accept =
-        solidcraft_engine::io::formats::open_extensions(true).iter().chain(&["dxf", "svg"]).map(|e| format!(".{e}")).collect::<Vec<_>>().join(",");
-    input.set_accept(&accept);
+    let mut extensions = solidcraft_engine::io::formats::open_extensions(true);
+    extensions.extend(["dxf", "svg"]);
+    input.set_accept(&disk::input_accept(&extensions, apple_touch()));
     // Attached (hidden) while it is open: some browsers ignore a click on a detached input.
     let _ = input.set_attribute("style", "display:none");
     if let Some(body) = doc.body() {
@@ -534,7 +568,7 @@ fn input_picker(files: &Rc<Files>, intent: Intent) {
 /// `None` when the dialog was closed or the file could not be read.
 pub fn pick_upload(files: &Rc<Files>, extensions: &[&str]) -> impl std::future::Future<Output = Option<String>> + use<> {
     // Shown now, in the click: a file dialog needs the user's gesture.
-    let chosen = choose_file(&disk::accept_list(extensions));
+    let chosen = choose_file(&disk::input_accept(extensions, apple_touch()));
     let limit = disk::upload_limit(extensions);
     let files = files.clone();
     async move {
@@ -559,6 +593,14 @@ pub fn pick_upload(files: &Rc<Files>, extensions: &[&str]) -> impl std::future::
             }
         }
     }
+}
+
+/// The page runs on an iPhone or iPad, whose file inputs offer every file (`disk::input_accept`).
+fn apple_touch() -> bool {
+    web_sys::window().is_some_and(|w| {
+        let nav = w.navigator();
+        disk::apple_touch(&nav.user_agent().unwrap_or_default(), nav.max_touch_points())
+    })
 }
 
 /// Show a hidden `<input type=file>` offering `accept` (call in the click). The promise answers
@@ -590,13 +632,15 @@ fn choose_file(accept: &str) -> Result<js_sys::Promise, String> {
 }
 
 /// Read files dropped on the page.
-pub fn take_drops(files: &Rc<Files>, raw: &mut egui::RawInput) {
+/// `theme`: the pointer is over Preferences' Import tile, so the files are themes.
+pub fn take_drops(files: &Rc<Files>, raw: &mut egui::RawInput, theme: bool) {
+    let intent = if theme { Intent::Theme } else { Intent::Insert };
     for f in std::mem::take(&mut raw.dropped_files) {
         let files = files.clone();
         spawn_local(async move {
             let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
             match f.bytes_async().await {
-                Ok(b) => files.arrive(name, b, Intent::Insert),
+                Ok(b) => files.arrive(name, b, intent),
                 Err(e) => files.say(format!("{name}: {e}"), true),
             }
         });

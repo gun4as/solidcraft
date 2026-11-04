@@ -27,6 +27,8 @@ pub struct Family {
     pub id: String,
     pub name: String,
     pub standard: String,
+    /// `metric` or `inch`: the Unit system list shows the families of one at a time.
+    pub system: String,
     /// "fasteners" or "gears_pulleys" (the Fastener and Gear / Pulley dialogs each list one).
     pub group: String,
     /// The category it is listed under (`Category::id`).
@@ -41,6 +43,19 @@ pub struct Family {
     /// One part of a set (a bevel gear of a pair): inserted with its set, not listed alone.
     pub member: bool,
 }
+
+/// A family's name in the user's language, by its id in the library (`parts.family.<id>`), else
+/// by its English name as a label: the library's own name for a family the catalogs don't know.
+pub(crate) fn family_name(f: &Family) -> String {
+    let id = format!("parts.family.{}", f.id);
+    match crate::i18n::tr(&id) {
+        shown if shown == id => crate::i18n::tr_label(&f.name).to_string(),
+        shown => shown.to_string(),
+    }
+}
+
+/// The Unit system list: each system's id in the library and its label.
+const SYSTEMS: [(&str, &str); 2] = [("metric", "Metric"), ("inch", "Inch")];
 
 /// The library as `parts.library` gives it.
 pub fn families(v: &Value) -> Vec<Family> {
@@ -60,6 +75,7 @@ pub fn families(v: &Value) -> Vec<Family> {
             Some(Family {
                 name: f.get("name").and_then(Value::as_str).unwrap_or(&id).to_string(),
                 standard: f.get("standard").and_then(Value::as_str).unwrap_or("").to_string(),
+                system: f.get("system").and_then(Value::as_str).unwrap_or("metric").to_string(),
                 group: f.get("group").and_then(Value::as_str).unwrap_or("fasteners").to_string(),
                 category: f.get("category").and_then(Value::as_str).unwrap_or("").to_string(),
                 sizes,
@@ -317,7 +333,7 @@ impl Options {
     pub fn rows(&mut self, ui: &mut egui::Ui, f: &Family) {
         let takes = |o: &str| f.options.iter().any(|x| x == o);
         if takes("bore") {
-            text_row(ui, "Bore", &mut self.bore, "automatic");
+            text_row(ui, "Bore", &mut self.bore, crate::i18n::tr("parts.automatic_name"));
         }
         if takes("helix_angle") {
             text_row(ui, "Helix angle", &mut self.helix, "20°");
@@ -357,19 +373,19 @@ impl Options {
             text_row(ui, "Offset hole Ø", &mut self.hole_diameter, "none");
         }
         if takes("hub_diameter") {
-            text_row(ui, "Hub Ø (seat)", &mut self.hub_diameter, "automatic");
+            text_row(ui, "Hub Ø (seat)", &mut self.hub_diameter, crate::i18n::tr("parts.automatic_name"));
         }
         if takes("hub_length") {
-            text_row(ui, "Hub length", &mut self.hub_length, "automatic");
+            text_row(ui, "Hub length", &mut self.hub_length, crate::i18n::tr("parts.automatic_name"));
         }
         if takes("mate_bore") {
-            text_row(ui, "Mate's bore", &mut self.mate_bore, "automatic");
+            text_row(ui, "Mate's bore", &mut self.mate_bore, crate::i18n::tr("parts.automatic_name"));
         }
         if takes("mate_hub_diameter") {
-            text_row(ui, "Mate's hub Ø", &mut self.mate_hub_diameter, "automatic");
+            text_row(ui, "Mate's hub Ø", &mut self.mate_hub_diameter, crate::i18n::tr("parts.automatic_name"));
         }
         if takes("mate_hub_length") {
-            text_row(ui, "Mate's hub length", &mut self.mate_hub_length, "automatic");
+            text_row(ui, "Mate's hub length", &mut self.mate_hub_length, crate::i18n::tr("parts.automatic_name"));
         }
     }
 }
@@ -426,9 +442,11 @@ fn member_rows(app: &SolveApp, ui: &mut egui::Ui, v: &Value) {
 
 /// The dialog for Insert Part.
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
-    matches!(id, "parts.fastener" | "parts.insert" | "parts.gear").then(|| {
+    // Standard Parts itself only lists the library: started from the app it opens the dialog
+    // that shows it (#8735).
+    matches!(id, "parts.fastener" | "parts.insert" | "parts.gear" | "parts.library").then(|| {
         let gears = id == "parts.gear";
-        (Kind::Part(Pt::new(gears)), vec![SelInput::new("Hole (optional)", FACES | EDGES, false)])
+        (Kind::Part(Pt::new(gears)), vec![SelInput::new("parts.holes", FACES | EDGES, true)])
     })
 }
 
@@ -518,26 +536,104 @@ pub fn search(lib: &[Family], cats: &[Category], query: &str) -> Vec<Hit> {
     found.into_iter().take(MAX_HITS).map(|(_, h)| h).collect()
 }
 
-/// The insert command's parameters for the picks.
-pub fn insert_params(lib: &[Family], k: &Pt, hole: Option<&Sel>) -> Result<Value, String> {
+/// The insert command's parameters for the hole picks: one part seated in each.
+pub fn insert_params(lib: &[Family], k: &Pt, holes: &[Sel]) -> Result<Value, String> {
     let f = lib.get(k.family).ok_or("the parts library is empty")?;
     let (size, _) = f.sizes.get(k.size).ok_or("pick a size")?;
     let mut p = json!({"family": f.id, "size": size});
     if let Some(l) = k.length.and_then(|i| f.lengths.as_ref().and_then(|ls| ls.get(i))) {
         p["length"] = json!(l);
     }
-    match hole {
-        Some(Sel::Face { point, .. } | Sel::Edge { point, .. }) => p["at"] = json!([point.x, point.y, point.z]),
-        _ => {
+    let at: Vec<Value> = holes
+        .iter()
+        .filter_map(|h| match h {
+            Sel::Face { point, .. } | Sel::Edge { point, .. } => Some(json!([point.x, point.y, point.z])),
+            _ => None,
+        })
+        .collect();
+    match at.len() {
+        0 => {
             p["point"] = json!([0.0, 0.0, 0.0]);
             p["direction"] = json!([0.0, 0.0, 1.0]);
         }
+        // One hole keeps the single pick's form.
+        1 => p["at"] = at.into_iter().next().unwrap_or(Value::Null),
+        _ => p["at"] = Value::Array(at),
     }
     if !k.name.trim().is_empty() {
         p["name"] = json!(k.name.trim());
     }
     k.opt.params(f, &mut p, false)?;
     Ok(p)
+}
+
+/// A length (mm) of a part of the family: in fractional inches for an inch family, in the
+/// design's units otherwise.
+pub(crate) fn length_label(app: &SolveApp, family: &str, mm: f64) -> String {
+    solidcraft_engine::cmd::part_length_label(family, mm).unwrap_or_else(|| crate::prefs::show_mm(app, mm, 1))
+}
+
+/// Where the Length list opens for a size: the index of the length an insert of it gets when
+/// none is asked for, which `parts.library` reports beside the size's table values; none for a
+/// size whose default is not one of the list (a bevel gear's face, a set's parts).
+fn default_length(f: &Family, size: usize, lengths: &[f64]) -> Option<usize> {
+    f.sizes
+        .get(size)
+        .and_then(|(_, row)| row.get("default_length"))
+        .and_then(Value::as_f64)
+        .and_then(|d| lengths.iter().position(|l| (*l - d).abs() < 1e-9))
+}
+
+/// The message a size's dimension is labelled with, by its key in the library: "Head height",
+/// not `head_height`. A key the library adds later shows as it is until it has one here.
+fn dimension_label(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "across_flats" => "parts.dimension.across_flats",
+        "bore" => "parts.dimension.bore",
+        "d" => "parts.dimension.d",
+        "head_diameter" => "parts.dimension.head_diameter",
+        "head_height" => "parts.dimension.head_height",
+        "height" => "parts.dimension.height",
+        "inner" => "parts.dimension.inner",
+        "outer" => "parts.dimension.outer",
+        "pitch" => "parts.dimension.pitch",
+        "socket" => "parts.dimension.socket",
+        "socket_depth" => "parts.dimension.socket_depth",
+        "thickness" => "parts.dimension.thickness",
+        "width" => "parts.dimension.width",
+        "series" => "parts.dimension.series",
+        "lobe" => "parts.dimension.lobe",
+        "recess" => "parts.dimension.recess",
+        "slot" => "parts.dimension.slot",
+        "slot_depth" => "parts.dimension.slot_depth",
+        "teeth" => "parts.dimension.teeth",
+        "module" => "parts.dimension.module",
+        "pitch_diameter" => "parts.dimension.pitch_diameter",
+        "outside_diameter" => "parts.dimension.outside_diameter",
+        "inside_diameter" => "parts.dimension.inside_diameter",
+        "root_diameter" => "parts.dimension.root_diameter",
+        "helix_angle" => "parts.dimension.helix_angle",
+        "center_distance" => "parts.dimension.center_distance",
+        "lead" => "parts.dimension.lead",
+        "lead_angle" => "parts.dimension.lead_angle",
+        "starts" => "parts.dimension.starts",
+        "mate" => "parts.dimension.mate",
+        "cone_angle" => "parts.dimension.cone_angle",
+        "cone_distance" => "parts.dimension.cone_distance",
+        "face_width" => "parts.dimension.face_width",
+        "hub_diameter" => "parts.dimension.hub_diameter",
+        "hub_length" => "parts.dimension.hub_length",
+        "pinion" => "parts.dimension.pinion",
+        "gear" => "parts.dimension.gear",
+        "wheel" => "parts.dimension.wheel",
+        "worm" => "parts.dimension.worm",
+        "sun" => "parts.dimension.sun",
+        "planet" => "parts.dimension.planet",
+        "ring" => "parts.dimension.ring",
+        "planets" => "parts.dimension.planets",
+        "ratio" => "parts.dimension.ratio",
+        _ => return None,
+    })
 }
 
 /// The part alone at the origin, built in a session of its own (for its picture).
@@ -679,9 +775,31 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         k.pick(family, size);
         k.query.clear();
     }
-    // The categories, as pictures.
+    // The Unit system list (fasteners) picks metric or inch: the categories and types then list
+    // that system's families. The system shown is the chosen family's, so a new system moves the
+    // choice to its first family.
+    let current = lib.get(k.family).map_or("metric", |f| f.system.as_str()).to_string();
+    let system_id = if k.gears {
+        "metric".to_string()
+    } else {
+        let mut system = SYSTEMS.iter().position(|s| s.0 == current).unwrap_or(0);
+        let was = system;
+        let labels = SYSTEMS.map(|s| crate::i18n::tr_label(s.1));
+        choice_row(ui, "Unit system", "pt_system", &mut system, &labels);
+        let id = SYSTEMS.get(system).map_or("metric", |s| s.0).to_string();
+        if system != was
+            && let Some(first) = lib.iter().position(|f| f.system == id)
+        {
+            k.pick(first, 0);
+        }
+        id
+    };
+    let gears = k.gears;
+    let in_system = |f: &Family| gears || f.system == system_id;
+    // The categories, as pictures: those with a family of the system.
     let here = lib.get(k.family).map(|f| f.category.clone()).unwrap_or_default();
-    let cats: Vec<(usize, Category)> = k.cats.clone().into_iter().enumerate().collect();
+    let cats: Vec<(usize, Category)> =
+        k.cats.clone().into_iter().enumerate().filter(|(_, c)| lib.iter().any(|f| f.category == c.id && in_system(f))).collect();
     let mut chosen = None;
     ui.vertical(|ui| {
         tile_grid(ui, &cats, |ui, (i, c), size| {
@@ -697,19 +815,23 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     if let Some(c) = chosen.and_then(|i| k.cats.get(i)).cloned() {
         // Its sample's family and size, else the category's first family.
         let sample_family = c.sample.get("family").and_then(Value::as_str).unwrap_or("");
-        let family = lib.iter().position(|f| f.id == sample_family).or_else(|| lib.iter().position(|f| f.category == c.id)).unwrap_or(0);
+        let family = lib
+            .iter()
+            .position(|f| f.id == sample_family && in_system(f))
+            .or_else(|| lib.iter().position(|f| f.category == c.id && in_system(f)))
+            .unwrap_or(0);
         let sample_size = c.sample.get("size").and_then(Value::as_str).unwrap_or("");
         let size = lib.get(family).and_then(|f| f.sizes.iter().position(|s| s.0 == sample_size)).unwrap_or(0);
         k.pick(family, size);
     }
     // The families of its category.
     let Some(f) = lib.get(k.family).cloned() else { return false };
-    let members: Vec<usize> = (0..lib.len()).filter(|i| lib.get(*i).is_some_and(|g| g.category == f.category)).collect();
+    let members: Vec<usize> = (0..lib.len()).filter(|i| lib.get(*i).is_some_and(|g| g.category == f.category && in_system(g))).collect();
     if members.len() > 1 {
         let names: Vec<String> = members
             .iter()
             .filter_map(|i| lib.get(*i))
-            .map(|g| if g.standard.is_empty() { g.name.clone() } else { format!("{} ({})", g.name, g.standard) })
+            .map(|g| if g.standard.is_empty() { family_name(g) } else { format!("{} ({})", family_name(g), g.standard) })
             .collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let mut at = members.iter().position(|i| *i == k.family).unwrap_or(0);
@@ -750,25 +872,44 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         .collect();
     let refs: Vec<&str> = sizes.iter().map(String::as_str).collect();
     let mut at = shown.iter().position(|i| *i == k.size).unwrap_or(0);
+    let was_size = k.size;
     choice_row(ui, "Size", "pt_size", &mut at, &refs);
     k.size = shown.get(at).copied().unwrap_or(k.size);
+    // Each size has a default length of its own, so a new size resolves the Length list again.
+    if k.size != was_size {
+        k.length = None;
+    }
     if let Some(ls) = &f.lengths {
-        let mut labels = vec!["Default".to_string()];
-        labels.extend(ls.iter().map(|l| crate::prefs::show_mm(app, *l, 1)));
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let mut i = k.length.map_or(0, |x| x + 1);
-        form_row(ui, if k.gears { "Width" } else { "Length" }, |ui| {
-            combo(ui, "pt_len", &refs, &mut i);
-            k.length = i.checked_sub(1);
-        });
+        let lengths: Vec<String> = ls.iter().map(|l| length_label(app, &f.id, *l)).collect();
+        match default_length(f, k.size, ls) {
+            // The list opens on the size's default.
+            Some(d) => {
+                let refs: Vec<&str> = lengths.iter().map(String::as_str).collect();
+                let mut i = k.length.unwrap_or(d);
+                form_row(ui, if k.gears { "Width" } else { "Length" }, |ui| {
+                    combo(ui, "pt_len", &refs, &mut i);
+                    k.length = Some(i);
+                });
+            }
+            None => {
+                let mut labels = vec![crate::i18n::tr_label("Default").to_string()];
+                labels.extend(lengths);
+                let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let mut i = k.length.map_or(0, |x| x + 1);
+                form_row(ui, if k.gears { "Width" } else { "Length" }, |ui| {
+                    combo(ui, "pt_len", &refs, &mut i);
+                    k.length = i.checked_sub(1);
+                });
+            }
+        }
     }
     k.opt.rows(ui, f);
     // As made with the options above (the table below gives the size's defaults).
-    let made = if k.gears { insert_params(&lib, k, None).ok() } else { None };
+    let made = if k.gears { insert_params(&lib, k, &[]).ok() } else { None };
     diameter_rows(app, ui, &mut k.dia, made);
-    text_row(ui, "Name", &mut k.name, "automatic");
+    text_row(ui, "Name", &mut k.name, crate::i18n::tr("parts.automatic_name"));
     // The part (its picture follows every field that shapes it), and its table values.
-    let shown = insert_params(&lib, k, None).ok().map_or(Shown::Missing, |p| picture(ui.ctx(), &p));
+    let shown = insert_params(&lib, k, &[]).ok().map_or(Shown::Missing, |p| picture(ui.ctx(), &p));
     ui.vertical(|ui| match shown {
         Shown::Ready(tx) => {
             ui.add(egui::Image::new(&tx).fit_to_exact_size(vec2(180.0, 112.0)).corner_radius(t.radius_sm));
@@ -785,8 +926,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     {
         // The diameters are shown above, as made.
         let made = |key: &str| matches!(key, "pitch_diameter" | "outside_diameter" | "root_diameter" | "base_diameter" | "cone_angle");
-        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label") && !(k.gears && made(key))) {
-            form_row(ui, &key.replace('_', " "), |ui| {
+        // `default_length` picks the Length list's opening value; it is not a dimension.
+        for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label" | "default_length") && !(k.gears && made(key))) {
+            let label = dimension_label(key).map_or_else(|| key.replace('_', " "), |l| crate::i18n::tr(l).to_string());
+            form_row(ui, &label, |ui| {
                 crate::ui_kit::text(
                     ui,
                     &match (key.as_str(), v.as_f64()) {
@@ -805,11 +948,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     }
     if inputs.first().is_some_and(|i| i.items.is_empty()) {
         ui.vertical(|ui| {
-            crate::ui_kit::text(
-                ui,
-                crate::i18n::tr_label("pick a hole to seat it, or OK places it at the origin"),
-                crate::ui_kit::Text::Note("parts_placement"),
-            );
+            crate::ui_kit::text(ui, crate::i18n::tr("parts.placement_hint"), crate::ui_kit::Text::Note("parts_placement"));
         });
     }
     false
@@ -821,7 +960,7 @@ pub fn commands(app: &SolveApp, k: &Pt, inputs: &[SelInput]) -> Result<Vec<(Stri
         Some(l) => l.clone(),
         None => app.session.scratch().execute("parts.library", &json!({})).map(|v| of_group(families(&v), k.gears)).unwrap_or_default(),
     };
-    let p = insert_params(&lib, k, inputs.first().and_then(|i| i.items.first()))?;
+    let p = insert_params(&lib, k, inputs.first().map_or(&[][..], |i| &i.items))?;
     // The toolbar's command when the engine has it (same parameters).
     let tool = if k.gears { "parts.gear" } else { "parts.fastener" };
     let id = if solidcraft_engine::find_command(tool).is_some() { tool } else { "parts.insert" };
@@ -831,12 +970,13 @@ pub fn commands(app: &SolveApp, k: &Pt, inputs: &[SelInput]) -> Result<Vec<(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solidcraft_engine::geom::Vec3;
+    use solidcore_record::Vec3;
 
     fn lib() -> Vec<Family> {
         families(&json!({"families": [
             {"family": "socket_head_cap_screw", "name": "Socket Head Cap Screw", "standard": "ISO 4762",
-             "sizes": [{"size": "M5", "head_diameter": 8.5}, {"size": "M6", "head_diameter": 10}], "lengths": [10, 16, 20]},
+             "sizes": [{"size": "M5", "head_diameter": 8.5, "default_length": 16},
+                       {"size": "M6", "head_diameter": 10, "default_length": 20}], "lengths": [10, 16, 20]},
             {"family": "bearing", "name": "Deep Groove Ball Bearing", "standard": "", "sizes": [{"size": "608", "bore": 8}], "lengths": null},
         ]}))
     }
@@ -850,20 +990,95 @@ mod tests {
         assert!(l[1].lengths.is_none());
     }
 
-    /// A hole pick seats the part (`at`); without one it goes to the origin along Z.
+    /// The library's fastener families are named in the user's language, and a family the
+    /// catalogs don't know keeps the library's name.
+    #[test]
+    fn family_names_follow_the_language() {
+        let l = families(&solidcraft_engine::Session::default().execute("parts.library", &json!({})).unwrap());
+        let fasteners = ["socket_head_cap_screw", "button_head_cap_screw", "hex_bolt", "hex_nut", "washer", "set_screw", "dowel_pin", "bearing"];
+        let _german = crate::i18n::scope("de");
+        for f in l.iter().filter(|f| fasteners.contains(&f.id.as_str())) {
+            assert_ne!(family_name(f), f.name, "{}", f.id);
+        }
+        let unknown = Family { id: "spring".into(), name: "Spring".into(), system: "metric".into(), ..lib()[1].clone() };
+        assert_eq!(family_name(&unknown), "Spring");
+    }
+
+    /// The Length list is lengths only where the size reports its default: it opens on it. A size
+    /// without one (a bevel gear's face follows its cone) keeps a Default item.
+    #[test]
+    fn the_length_list_opens_on_the_size_s_default() {
+        let l = lib();
+        let ls = l[0].lengths.clone().unwrap_or_default();
+        assert_eq!(default_length(&l[0], 0, &ls), Some(1), "M5 opens on 16");
+        assert_eq!(default_length(&l[0], 1, &ls), Some(2), "M6 opens on 20");
+        assert_eq!(default_length(&l[1], 0, &ls), None, "a size without one");
+        assert_eq!(default_length(&l[0], 99, &ls), None, "nor a size that is not there");
+    }
+
+    /// The Unit system row picks metric or inch: the first inch family, its first size; back to
+    /// metric, a metric family.
+    #[test]
+    fn the_system_list_picks_the_families_type_shows() {
+        let chosen = |h: &crate::scenario::Harness| {
+            let Kind::Part(k) = &h.app.dialog.as_ref().unwrap().kind else { panic!("not Insert Part") };
+            commands(&h.app, k, &[]).unwrap()[0].1.clone()
+        };
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.start("parts.insert");
+        h.frames(3);
+        assert!(h.widget_near("Metric", "Unit system").is_some());
+        assert_eq!(chosen(&h)["family"], "socket_head_cap_screw");
+        h.step(&json!({"click":{"handle":"dialog:Unit system"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:Unit system:Inch"}})).unwrap();
+        h.frames(2);
+        assert_eq!((chosen(&h)["family"].as_str(), chosen(&h)["size"].as_str()), (Some("hex_cap_screw_inch"), Some("1/4-20 UNC")));
+        h.step(&json!({"click":{"handle":"dialog:Unit system"}})).unwrap();
+        h.step(&json!({"click":{"handle":"dialog:Unit system:Metric"}})).unwrap();
+        h.frames(2);
+        assert!(chosen(&h)["family"].as_str().is_some_and(|f| !f.ends_with("_inch") && !matches!(f, "washer_sae" | "washer_uss")), "{}", chosen(&h));
+    }
+
+    /// Every dimension the library gives for a size is labelled in words, in each family.
+    #[test]
+    fn every_library_dimension_has_a_label_in_words() {
+        let mut s = solidcraft_engine::Session::default();
+        let l = families(&s.execute("parts.library", &json!({})).unwrap());
+        assert!(l.len() >= 7, "{}", l.len());
+        let mut unlabelled = std::collections::BTreeSet::new();
+        for f in &l {
+            for (_, row) in &f.sizes {
+                for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| !matches!(k.as_str(), "size" | "default_length" | "label")) {
+                    let label = dimension_label(key).map(crate::i18n::tr);
+                    if !label.is_some_and(|l| l.starts_with(char::is_uppercase) && !l.contains('_') && !l.starts_with("parts.")) {
+                        unlabelled.insert(format!("{key} ({})", f.id));
+                    }
+                }
+            }
+        }
+        assert!(unlabelled.is_empty(), "{unlabelled:?}");
+    }
+
+    /// A hole pick seats the part (`at`), several picks seat it in each hole (#9341); without one
+    /// it goes to the origin along Z.
     #[test]
     fn insert_params_for_picks() {
         let l = lib();
         let k = Pt { size: 1, length: Some(2), ..Pt::new(false) };
         let hole = Sel::Face { body: "Body1".into(), index: 3, point: Vec3::new(5.0, 0.0, 10.0) };
-        let p = insert_params(&l, &k, Some(&hole)).unwrap();
+        let p = insert_params(&l, &k, std::slice::from_ref(&hole)).unwrap();
         assert_eq!(p, json!({"family": "socket_head_cap_screw", "size": "M6", "length": 20.0, "at": [5.0, 0.0, 10.0]}));
+        let rim = Sel::Edge { body: "Body1".into(), index: 7, point: Vec3::new(25.0, 0.0, 10.0) };
+        let p = insert_params(&l, &k, &[hole, rim]).unwrap();
+        assert_eq!(p["at"], json!([[5.0, 0.0, 10.0], [25.0, 0.0, 10.0]]));
+        assert!(p.get("point").is_none());
         let k = Pt { family: 1, name: "Front bearing".into(), ..Pt::new(false) };
-        let p = insert_params(&l, &k, None).unwrap();
+        let p = insert_params(&l, &k, &[]).unwrap();
         assert_eq!(p["point"], json!([0.0, 0.0, 0.0]));
         assert_eq!(p["name"], "Front bearing");
         assert!(p.get("length").is_none());
-        assert!(insert_params(&[], &k, None).is_err());
+        assert!(insert_params(&[], &k, &[]).is_err());
     }
 
     /// A family's options decide which typed fields go to the command: a helical gear takes a
@@ -877,15 +1092,15 @@ mod tests {
             {"family": "ring_gear_m1", "name": "Ring gear", "sizes": [{"size": "60"}], "lengths": [10], "options": []},
         ]}));
         let k = Pt { opt: Box::new(Options { bore: "6".into(), helix: "-15".into(), starts: "2".into(), ..Options::default() }), ..Pt::new(true) };
-        let p = insert_params(&l, &k, None).unwrap();
+        let p = insert_params(&l, &k, &[]).unwrap();
         assert_eq!((p["bore"].clone(), p["helix_angle"].clone(), p.get("starts")), (json!(6.0), json!(-15.0), None));
-        let p = insert_params(&l, &Pt { opt: Box::new(Options { helix: "0.3 rad".into(), ..(*k.opt).clone() }), ..k.clone() }, None).unwrap();
+        let p = insert_params(&l, &Pt { opt: Box::new(Options { helix: "0.3 rad".into(), ..(*k.opt).clone() }), ..k.clone() }, &[]).unwrap();
         assert_eq!(p["helix_angle"], "0.3 rad");
-        let p = insert_params(&l, &Pt { family: 1, ..k.clone() }, None).unwrap();
+        let p = insert_params(&l, &Pt { family: 1, ..k.clone() }, &[]).unwrap();
         assert_eq!((p["starts"].clone(), p.get("helix_angle")), (json!(2), None));
-        let p = insert_params(&l, &Pt { family: 2, ..k.clone() }, None).unwrap();
+        let p = insert_params(&l, &Pt { family: 2, ..k.clone() }, &[]).unwrap();
         assert!(p.get("bore").is_none() && p.get("starts").is_none(), "{p}");
-        assert!(insert_params(&l, &Pt { family: 1, opt: Box::new(Options { starts: "7".into(), ..(*k.opt).clone() }), ..k }, None).is_err());
+        assert!(insert_params(&l, &Pt { family: 1, opt: Box::new(Options { starts: "7".into(), ..(*k.opt).clone() }), ..k }, &[]).is_err());
         // A screw: its drive when it has a choice, and a modelled thread.
         let l = families(&json!({"families": [
             {"family": "pan_head_screw", "name": "Pan head screw", "sizes": [{"size": "M4"}], "lengths": [10],
@@ -894,9 +1109,9 @@ mod tests {
         ]}));
         assert_eq!(l.first().map(|f| f.drives.len()), Some(2));
         let k = Pt { opt: Box::new(Options { drive: "hexalobular".into(), modeled: true, ..Options::default() }), ..Pt::new(false) };
-        let p = insert_params(&l, &k, None).unwrap();
+        let p = insert_params(&l, &k, &[]).unwrap();
         assert_eq!((p["drive"].clone(), p["thread"].clone()), (json!("hexalobular"), json!("modeled")));
-        let p = insert_params(&l, &Pt { family: 1, ..k }, None).unwrap();
+        let p = insert_params(&l, &Pt { family: 1, ..k }, &[]).unwrap();
         assert!(p.get("drive").is_none() && p.get("thread").is_none(), "{p}");
     }
 
