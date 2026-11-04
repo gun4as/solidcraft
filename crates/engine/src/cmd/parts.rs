@@ -65,7 +65,7 @@ const FAMILIES: &[(&str, &str, &str)] = &[
     ("set_screw_dog", "Hex socket set screw, dog point", "ISO 4028"),
     ("set_screw_cup", "Hex socket set screw, cup point", "ISO 4029"),
     ("dowel_pin", "Parallel pin (dowel)", "ISO 8734"),
-    ("bearing", "Deep groove ball bearing", "ISO 15, series 68, 69, 60, 62, 63"),
+    ("bearing", "Deep groove ball bearing", "ISO 15, series 67, 68, 69, 60, 62, 63"),
     ("spur_gear_m0_5", "Spur gear, module 0.5", "ISO 53 profile, 20°"),
     ("spur_gear_m1", "Spur gear, module 1", "ISO 53 profile, 20°"),
     ("spur_gear_m1_5", "Spur gear, module 1.5", "ISO 53 profile, 20°"),
@@ -794,7 +794,7 @@ const DOWEL: [f64; 9] = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 16.0];
 /// Deep groove ball bearings, open (ISO 15 boundary dimensions): (designation, bore, outside
 /// diameter, width), by series: 68 thin, 69, 60, 62 and 63 heavy, the miniature sizes first.
 /// The series is the designation's first two digits.
-const BEARINGS: [(&str, f64, f64, f64); 91] = [
+const BEARINGS: [(&str, f64, f64, f64); 102] = [
     ("681", 1.0, 3.0, 1.0),
     ("682", 2.0, 5.0, 1.5),
     ("683", 3.0, 7.0, 2.0),
@@ -804,6 +804,17 @@ const BEARINGS: [(&str, f64, f64, f64); 91] = [
     ("687", 7.0, 14.0, 3.5),
     ("688", 8.0, 16.0, 4.0),
     ("689", 9.0, 17.0, 4.0),
+    ("6700", 10.0, 15.0, 4.0),
+    ("6701", 12.0, 18.0, 4.0),
+    ("6702", 15.0, 21.0, 4.0),
+    ("6703", 17.0, 23.0, 4.0),
+    ("6704", 20.0, 27.0, 4.0),
+    ("6705", 25.0, 32.0, 4.0),
+    ("6706", 30.0, 37.0, 4.0),
+    ("6707", 35.0, 44.0, 5.0),
+    ("6708", 40.0, 50.0, 6.0),
+    ("6709", 45.0, 55.0, 6.0),
+    ("6710", 50.0, 62.0, 6.0),
     ("6800", 10.0, 19.0, 5.0),
     ("6801", 12.0, 21.0, 5.0),
     ("6802", 15.0, 24.0, 5.0),
