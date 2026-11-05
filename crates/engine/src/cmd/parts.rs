@@ -3013,6 +3013,15 @@ fn shape_diameters(sh: &Shape) -> Option<Value> {
     })
 }
 
+/// Take a part built on `computed`, a scratch copy of `s` made just before, with the sketches
+/// its sweeps hid: `accept_computed` keeps the live session's sketches as they were, and
+/// nothing changed them meanwhile.
+fn adopt(s: &mut Session, computed: Session) {
+    let sketches = (computed.visibility.hidden_sketches.clone(), computed.visibility.shown_sketches.clone());
+    s.accept_computed(computed);
+    (s.visibility.hidden_sketches, s.visibility.shown_sketches) = sketches;
+}
+
 /// Building the part and seating it runs many feature and joint commands: as in
 /// [`resize_atomic`], they run on a scratch session and the insert is one undo step.
 fn insert_atomic(s: &mut Session, p: &Value) -> Result<Value> {
@@ -3022,7 +3031,7 @@ fn insert_atomic(s: &mut Session, p: &Value) -> Result<Value> {
     computed.active_component = s.active_component;
     computed.active_occurrence_path = s.active_occurrence_path.clone();
     computed.active_sketch = s.active_sketch.filter(|id| computed.doc.feature(*id).is_some());
-    s.accept_computed(computed);
+    adopt(s, computed);
     Ok(result)
 }
 
@@ -3186,7 +3195,7 @@ fn resize_atomic(s: &mut Session, p: &Value) -> Result<Value> {
     computed.active_component = s.active_component;
     computed.active_occurrence_path = s.active_occurrence_path.clone();
     computed.active_sketch = s.active_sketch.filter(|id| computed.doc.feature(*id).is_some());
-    s.accept_computed(computed);
+    adopt(s, computed);
     Ok(result)
 }
 
@@ -3645,6 +3654,17 @@ mod tests {
         // Tooth 0 points along +x (the back cone leaning 2° in at the tips: m sin δ · 2° less).
         assert!((hi.x - od / 2.0).abs() < 0.1 && hi.x <= od / 2.0 && lo.x > -od / 2.0, "{lo:?} {hi:?}: {od}");
         assert!((hi.z - 7.0 * std::f64::consts::FRAC_PI_4.cos()).abs() < 1e-6, "{hi:?}");
+        // Its sketches are its insides: none is drawn over the teeth (the sweep's tooth outline,
+        // behind the back and larger than the gear, was).
+        let shown: Vec<u64> = s
+            .doc
+            .features
+            .iter()
+            .filter(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Sketch { .. }))
+            .map(|f| f.id)
+            .filter(|id| crate::view::sketch_shown(&s, *id))
+            .collect();
+        assert!(shown.is_empty(), "sketches shown: {shown:?}");
         // In a pair neither gear reaches past the other's flat back (each hub behind it as long as
         // the 14.5 mm face), so a housing can sit against both backs.
         let mut p = Session::default();

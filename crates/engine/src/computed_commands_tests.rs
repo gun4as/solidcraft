@@ -269,6 +269,25 @@ fn accepting_commands_keeps_a_joint_shown_while_the_worker_ran() {
     assert_eq!(session.visibility, visibility, "undoing geometry keeps both concurrent visibility changes");
 }
 
+/// A standard part hides the sketches its sweeps used; built on the worker, they stay hidden
+/// once accepted, beside what was hidden live meanwhile.
+#[test]
+fn accepting_commands_keeps_the_sketches_the_worker_hid() {
+    let mut session = Session::default();
+    let batch: Vec<(String, serde_json::Value)> = vec![
+        ("sketch.create".into(), json!({"plane":"XY"})),
+        ("sketch.rectangle.two_point".into(), json!({"p0":[0,0],"p1":[30,20]})),
+        ("sketch.finish".into(), json!({})),
+        ("browser.visibility".into(), json!({"items":["Sketch1"],"visible":false})),
+    ];
+    let prepared = session.scratch().compute_commands(&batch, None).unwrap();
+    let sketch = prepared.computed.doc.features.iter().find(|f| f.name == "Sketch1").map(|f| f.id).unwrap();
+    session.execute("browser.visibility", &json!({"items":["XY"],"visible":false})).unwrap();
+    session.accept_commands(prepared).unwrap();
+    assert_eq!(session.visibility.hidden_sketches, vec![sketch], "the worker's hide is kept");
+    assert_eq!(session.visibility.hidden_origin, vec!["XY".to_string()], "the live hide is kept");
+}
+
 #[test]
 fn cancelling_an_editor_with_visibility_changes_restores_an_existing_history_marker() {
     let (mut session, source, mut original, _) = extrusion_editor();

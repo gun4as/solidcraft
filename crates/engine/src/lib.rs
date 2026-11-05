@@ -2087,11 +2087,36 @@ impl Session {
         // Only joints newly hidden by the computation (e.g. an import's rigid group) join
         // the live view. A joint shown meanwhile must not inherit the worker's old hide.
         prepared.computed.visibility.hidden_joints.retain(|joint| !prepared.source.visibility.hidden_joints.contains(joint));
+        // Sketches the computation hid or showed (a standard part hides the sketches its sweeps
+        // used) join the live view too; every other sketch keeps its live state.
+        let (was, now) = (&prepared.source.visibility, &prepared.computed.visibility);
+        let hid: Vec<u64> = now.hidden_sketches.iter().filter(|id| !was.hidden_sketches.contains(id)).copied().collect();
+        let showed: Vec<u64> = was
+            .hidden_sketches
+            .iter()
+            .filter(|id| !now.hidden_sketches.contains(id))
+            .chain(now.shown_sketches.iter().filter(|id| !was.shown_sketches.contains(id)))
+            .copied()
+            .collect();
+        let kept_shown = now.shown_sketches.clone();
         for step in &prepared.steps {
             crash::accepted_command(self, &step.before, &step.after, &step.id, &step.params, step.changed);
         }
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
         self.accept_computed(prepared.computed);
+        let v = &mut self.visibility;
+        for id in hid {
+            v.shown_sketches.retain(|x| *x != id);
+            if !v.hidden_sketches.contains(&id) {
+                v.hidden_sketches.push(id);
+            }
+        }
+        for id in showed {
+            v.hidden_sketches.retain(|x| *x != id);
+            if kept_shown.contains(&id) && !v.shown_sketches.contains(&id) {
+                v.shown_sketches.push(id);
+            }
+        }
         Ok(replies)
     }
 
