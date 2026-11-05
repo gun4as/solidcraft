@@ -128,6 +128,7 @@ pub const DOCUMENTED: &[&str] = &[
     "parameters.import",
     "parameters.move",
     "parts.fastener",
+    "parts.gear",
     "parts.insert",
     "parts.library",
     "parts.resize",

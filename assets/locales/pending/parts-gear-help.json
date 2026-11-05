@@ -1,0 +1,23 @@
+{
+  "en": {
+    "help.parts.gear": "Adds a standard gear or pulley (spur, helical, bevel, worm, planetary, timing pulley) in the module and tooth count you pick. Use it for drives: a pair or set is placed meshing, with its dimensions shown before you insert it."
+  },
+  "ar": {
+    "help.parts.gear": "يضيف ترسًا أو بكرة قياسية (مستقيمة، حلزونية، مخروطية، دودية، كوكبية، بكرة توقيت) بالموديول وعدد الأسنان الذي تختاره. استخدمه لأنظمة النقل: يوضع الزوج أو المجموعة متعشّقين، وتُعرض الأبعاد قبل الإدراج."
+  },
+  "he": {
+    "help.parts.gear": "מוסיף גלגל שיניים או גלגלת תקניים (ישרים, הליקליים, חרוטיים, תולעת, פלנטריים, גלגלת תזמון) במודול ובמספר השיניים שבחרת. השתמש בו להנעות: זוג או מערכת ממוקמים משולבים, והמידות מוצגות לפני ההוספה."
+  },
+  "ja": {
+    "help.parts.gear": "選んだモジュールと歯数で標準の歯車またはプーリー（平歯車、はすば、かさ歯車、ウォーム、遊星、タイミングプーリー）を追加します。伝動装置に使います。ペアやセットはかみ合った状態で配置され、挿入前に寸法が表示されます。"
+  },
+  "lv": {
+    "help.parts.gear": "Pievieno standarta zobratu vai skriemeli (taisnzobu, slīpzobu, konisko, gliemežpārvadu, planetāro, zobsiksnas skriemeli) ar izvēlēto moduli un zobu skaitu. Izmanto pārvadiem: pāris vai komplekts tiek novietots sazobē, un izmēri redzami pirms ievietošanas."
+  },
+  "vi": {
+    "help.parts.gear": "Thêm bánh răng hoặc puly tiêu chuẩn (răng thẳng, răng nghiêng, côn, trục vít, hành tinh, puly đai răng) theo mô-đun và số răng bạn chọn. Dùng cho bộ truyền: cặp hoặc bộ được đặt ăn khớp, kích thước hiện ra trước khi chèn."
+  },
+  "zh": {
+    "help.parts.gear": "按所选模数和齿数添加标准齿轮或带轮（直齿、斜齿、锥齿、蜗杆、行星、同步带轮）。用于传动：齿轮副或齿轮组按啮合位置放置，插入前显示其尺寸。"
+  }
+}

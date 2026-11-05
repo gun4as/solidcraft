@@ -314,7 +314,7 @@ fn bore_for(root_radius: f64) -> f64 {
 
 /// The library's categories, as the dialogs show them: (id, name, group, and a part that
 /// pictures the category: family, size, length).
-const CATEGORIES: [(&str, &str, &str, &str, &str, f64); 14] = [
+const CATEGORIES: &[(&str, &str, &str, &str, &str, f64)] = &[
     ("screws", "Screws", "fasteners", "socket_head_cap_screw", "M6", 16.0),
     ("set_screws", "Set screws", "fasteners", "set_screw_dog", "M8", 10.0),
     ("nuts", "Nuts", "fasteners", "hex_nut", "M8", 0.0),
@@ -779,7 +779,7 @@ const SHCS_LOBE: [(&str, &str); 8] =
     [("M3", "T10"), ("M4", "T20"), ("M5", "T25"), ("M6", "T30"), ("M8", "T45"), ("M10", "T50"), ("M12", "T55"), ("M16", "T70")];
 
 /// ISO 10664 hexalobular recesses: (size, across the lobes' points A, across their roots B).
-const LOBES: [(&str, f64, f64); 13] = [
+const LOBES: &[(&str, f64, f64)] = &[
     ("T6", 1.75, 1.27),
     ("T8", 2.4, 1.75),
     ("T10", 2.8, 2.05),
