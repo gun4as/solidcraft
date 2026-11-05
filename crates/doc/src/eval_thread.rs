@@ -92,6 +92,10 @@ pub(super) struct ThreadAsk<'a> {
     /// A design saved before holes were sized by their nominal diameter: with no designation, a
     /// hole is matched by its tap drill alone ([`ThreadForm::fit_with`]), so it keeps its size.
     pub old_auto_size: bool,
+    /// The feature's component: its bodies are searched first. Components are modelled each in
+    /// its own frame, so another one's part can sit at the same point (two inserted parts, both
+    /// at the origin), and the thread must not land on it.
+    pub component: Option<u64>,
 }
 
 /// How one end of a thread's length meets its face.
@@ -188,20 +192,25 @@ impl FaceEnds<'_> {
 
 /// A thread on the cylindrical face at `p`: its size, and the part of the face it runs over.
 pub(super) fn thread_on(st: &ModelState, feature: u64, p: Vec3, ask: &ThreadAsk) -> Result<ThreadOn> {
-    let (bi, cyl) = st
-        .bodies
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| {
-            #[cfg(test)]
-            super::cost_tests::count(|c| c.cylinder_search += 1);
-            kernel::cylinder_face_at(&b.body, p).map(|c| (i, c))
-        })
-        .min_by(|a, b| {
-            let dist = |c: &kernel::CylinderFace| ((p - c.axis_point - c.axis * (p - c.axis_point).dot(c.axis)).len() - c.radius).abs();
-            dist(&a.1).total_cmp(&dist(&b.1))
-        })
-        .ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
+    let own = |b: &super::ModelBody| ask.component.is_some_and(|c| b.component == c) || b.feature == feature;
+    let nearest = |only_own: bool| {
+        st.bodies
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| !only_own || own(b))
+            .filter_map(|(i, b)| {
+                #[cfg(test)]
+                super::cost_tests::count(|c| c.cylinder_search += 1);
+                kernel::cylinder_face_at(&b.body, p).map(|c| (i, c))
+            })
+            .min_by(|a, b| {
+                let dist = |c: &kernel::CylinderFace| ((p - c.axis_point - c.axis * (p - c.axis_point).dot(c.axis)).len() - c.radius).abs();
+                dist(&a.1).total_cmp(&dist(&b.1))
+            })
+    };
+    // The feature's own component first; any body when none of its own has a face there.
+    let found = if ask.component.is_some() { nearest(true) } else { None };
+    let (bi, cyl) = found.or_else(|| nearest(false)).ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
     let mb = st.bodies.get(bi).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
     let dia = cyl.radius * 2.0;
     let form = match (ask.form, ask.designation.and_then(ThreadForm::of_designation)) {
@@ -802,6 +811,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         ease_out: (0.0, 0.0),
         tapped: false,
         old_auto_size: *old_auto_size,
+        component: Some(f.component),
     };
     if ease_out.is_some() && !*modeled {
         return Err(DocError::Invalid("a runout is cut only on a modelled thread".into()));
@@ -1053,6 +1063,7 @@ mod tests {
             ease_out: (0.0, 0.0),
             tapped: false,
             old_auto_size: false,
+            component: None,
         }
     }
 

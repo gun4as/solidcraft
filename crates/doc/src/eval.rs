@@ -7247,7 +7247,8 @@ fn eval_feature(
                     } else {
                         parallel_tapped_wall(st, p, dir, r).unwrap_or(p + dir.any_perp() * r + dir * (r * 0.5))
                     };
-                    let ask = thread::ThreadAsk { designation: Some(d), tapped: true, hand: *hand, ..Default::default() };
+                    let ask =
+                        thread::ThreadAsk { designation: Some(d), tapped: true, hand: *hand, component: Some(f.component), ..Default::default() };
                     if *modeled {
                         // Cut from the entry, as deep as `thread_depth` or along the whole wall:
                         // at a blind hole's bottom the groove stops clear of it, or fades out
