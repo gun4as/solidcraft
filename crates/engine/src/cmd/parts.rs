@@ -9,7 +9,10 @@
 //! holes it is still one component, placed once per hole, each placement with its own joint.
 //!
 //! Part frame: the seating plane is z = 0 (the underside of a head, the bottom of a nut or
-//! washer, the top of a set screw or pin); the shank runs down −z.
+//! washer, the top of a set screw or pin); the shank runs down −z. A countersunk screw is the
+//! exception: its head sinks into the part, so z = 0 is the top of the head, level with the face.
+//! Seated at a hole, its cone lies in the hole's 90 degree countersink: pick the rim where the
+//! countersink meets the bore.
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
@@ -40,7 +43,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("fastener")
         .contract(&INSERT_CONTRACT)
         .output(output_schema_for::<InsertedPart>)
-        .params("the Insert Part dialog's command (same as parts.insert): family, size, length?, at?|point?+direction?, name?"),
+        .params("the Insert Part dialog's command (same as parts.insert): family, size, length?, at?|point?+direction? (from the shank's tip toward the head), name?"),
     CommandSpec::new("parts.gear", "Insert Gear / Pulley", crate::checked!("parts.gear", insert_atomic))
         .at("SOLID", "INSERT")
         .icon("gear")
@@ -54,7 +57,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&INSERT_CONTRACT)
         .output(output_schema_for::<InsertedPart>)
         .params(
-        "family (socket_head_cap_screw | button_head_cap_screw | hex_bolt | hex_nut | washer | set_screw | dowel_pin | bearing | \
+        "family (socket_head_cap_screw | button_head_cap_screw | countersunk_socket_screw | hex_bolt | hex_nut | washer | set_screw | dowel_pin | bearing | \
          hex_cap_screw_inch | hex_nut_inch | washer_sae | washer_uss | spur_gear_m0_5 … spur_gear_m3 | helical_gear_m… | herringbone_gear_m… | \
          ring_gear_m… | worm_m… | worm_wheel_m… | bevel_gear_m… (modules 0_5, 1, 1_5, 2, 3) | bevel_pair_m… | worm_pair_m… | planetary_m… | \
          pulley_gt2 | pulley_htd3m | pulley_htd5m; parts.library lists them all); \
@@ -67,7 +70,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          bearing bore within the small end's roots, as long as the face is wide; length 0: no hub); \
          mate_bore?, mate_hub_diameter?, mate_hub_length? (a bevel pair: the gear's, the others the pinion's); \
          at?: [x,y,z] on a hole's rim or wall (the part seats on the hole's face with a rigid joint; a bearing goes in from the rim, into a hole or along a shaft or hub), \
-         or a list of them (one component, placed and seated once per hole) | point?: [x,y,z] with direction?: [x,y,z] (no joint); name? → component, occurrence, joint?, \
+         or a list of them (one component, placed and seated once per hole) | point?: [x,y,z] with direction?: [x,y,z] (no joint: the part's seating plane, under a head or \n         the bottom of a nut, washer or bearing, the top of a set screw, pin or countersunk head, goes to point, and direction is its +z, from the shank's tip toward the head; default [0,0,1], \n         head up, shank down -z); name? → component, occurrence, joint?, \
          and with at: occurrences, joints (one per hole, in pick order); a set: components, occurrences and names, a part each",
     ),
     CommandSpec::new("parts.resize", "Change Part Size", crate::checked!("parts.resize", resize_atomic))
@@ -705,14 +708,15 @@ const COLLAR: [(&str, f64, f64, f64, f64, f64, f64); 8] = [
 ];
 
 /// ISO 10642 countersunk hex socket, 90°: (size, theoretical dk, k, s, t).
-const CSK_SOCKET: [(&str, f64, f64, f64, f64); 9] = [
+const CSK_SOCKET: [(&str, f64, f64, f64, f64); 10] = [
     ("M3", 6.72, 1.86, 2.0, 1.1),
-    ("M4", 8.96, 2.48, 2.5, 1.5),
-    ("M5", 11.2, 3.1, 3.0, 1.9),
+    ("M4", 8.96, 2.48, 2.5, 1.4),
+    ("M5", 11.2, 3.1, 3.0, 1.75),
     ("M6", 13.44, 3.72, 4.0, 2.2),
-    ("M8", 17.92, 4.96, 5.0, 3.0),
-    ("M10", 22.4, 6.2, 6.0, 3.6),
+    ("M8", 17.92, 4.96, 5.0, 2.9),
+    ("M10", 22.4, 6.2, 6.0, 3.5),
     ("M12", 26.88, 7.44, 8.0, 4.3),
+    ("M14", 30.8, 8.4, 10.0, 4.5),
     ("M16", 33.6, 8.8, 10.0, 4.8),
     ("M20", 40.32, 10.16, 12.0, 5.6),
 ];
@@ -1083,6 +1087,27 @@ fn size_with_length(family: &str, size: &str, len: f64) -> String {
 
 fn metric(size: &str) -> Option<(f64, f64)> {
     METRIC.iter().find(|(s, _, _)| s.eq_ignore_ascii_case(size)).map(|(_, d, p)| (*d, *p))
+}
+
+/// The head a counterbore seats, for `solid.hole`'s `head`: (head diameter dk, head height k)
+/// of a metric cap screw, by its standard (`ISO 4762`, `ISO 7380-1`) or the family name
+/// `parts.insert` takes. The size is written as `clearance` takes it (`M4`, or `M4x0.7` with the
+/// pitch). The error names what is missing: the standard, or the size in it.
+pub(crate) fn cap_screw_head(standard: &str, size: &str) -> std::result::Result<(f64, f64), String> {
+    let (name, table): (&str, &[(&str, f64, f64, f64, f64)]) = match standard.trim() {
+        s if s.eq_ignore_ascii_case("ISO 4762") || s.eq_ignore_ascii_case("socket_head_cap_screw") => ("ISO 4762", &SHCS),
+        s if s.eq_ignore_ascii_case("ISO 7380-1") || s.eq_ignore_ascii_case("button_head_cap_screw") => ("ISO 7380-1", &BHCS),
+        other => {
+            return Err(format!("no head standard `{}`: ISO 4762 (socket head) or ISO 7380-1 (button head)", super::features::brief(other)));
+        }
+    };
+    let size = size.trim().split(['x', 'X']).next().unwrap_or("").trim();
+    let (first, last) = (table.first().map_or("", |r| r.0), table.last().map_or("", |r| r.0));
+    table
+        .iter()
+        .find(|r| r.0.eq_ignore_ascii_case(size))
+        .map(|r| (r.1, r.2))
+        .ok_or_else(|| format!("no {name} head for `{}`: {first} to {last}", super::features::brief(size)))
 }
 
 fn default_length(d: f64) -> f64 {
@@ -2394,6 +2419,8 @@ fn build(s: &mut Session, sh: &Shape) -> Result<()> {
     Ok(())
 }
 
+/// `parts.library`: the families, or with `family` one family's sizes (the rows of its table, in
+/// mm) and its standard lengths.
 fn library(_s: &mut Session, p: &Value) -> Result<Value> {
     let fam = |id: &str| -> Value {
         let mut sizes: Vec<Value> = match id {
@@ -2852,13 +2879,14 @@ fn set_identity(s: &mut Session, comp: u64, now: (String, String), was: Option<(
     }
 }
 
+/// The short label a family's parts are named with: `SHCS` in `SHCS M6x20`, `CSK` in `CSK M6x20`.
 fn label(family: &str) -> &'static str {
     match family {
         "socket_head_cap_screw" => "SHCS",
         "low_head_cap_screw" => "Low Head SHCS",
         "button_head_cap_screw" => "BHCS",
         "flanged_button_head_screw" => "Flanged Button Head",
-        "countersunk_socket_screw" => "Countersunk SHCS",
+        "countersunk_socket_screw" => "CSK",
         "countersunk_screw" => "Countersunk Screw",
         "pan_head_screw" | "pan_head_slotted_screw" => "Pan Head",
         "cheese_head_screw" => "Cheese Head",
@@ -3035,6 +3063,8 @@ fn insert_atomic(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(result)
 }
 
+/// `parts.insert`: build the part as its own component, then seat it with a rigid joint at each
+/// hole picked in `at`, or place it at `point`, or leave it at the origin.
 fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parts.insert (Insert Fastener)";
     let family = str_(p, "family").ok_or_else(|| bad(cmd, "`family` is required (parts.library)"))?.to_string();
@@ -3048,18 +3078,29 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     // A pick on a hole's rim also touches its end face: step onto the wall just inside the rim.
     // Each hole's occurrence is found before the part exists, so a pick off every body fails the
     // insert before anything is made.
-    let mut holes = Vec::new();
-    let mut seats: Vec<(u64, Vec3)> = Vec::new();
+    let mut holes: Vec<(Vec3, u64)> = Vec::new();
+    let mut seats: Vec<(u64, HoleWall)> = Vec::new();
     for a in hole_picks(p, cmd)? {
-        let (a, seat) = hole_wall(s, a).unwrap_or((a, a));
-        let host = super::joints::occurrence_at(s, a).ok_or_else(|| bad(cmd, "no body at `at` (pick a hole's rim or wall)"))?;
-        // A rim is drawn as more than one edge, and one click on it picks them all: the picks
-        // of one rim seat one part.
-        if seats.iter().any(|(h, q)| *h == host && (*q - seat).len() < 1e-3) {
-            continue;
+        let wall = hole_wall(s, a).unwrap_or(HoleWall { at: a, seat: a, axis: None, ends: None, open: true, radius: 0.0 });
+        let host = super::joints::occurrence_at(s, wall.at).ok_or_else(|| bad(cmd, "no body at `at` (pick a hole's rim or wall)"))?;
+        // A rim is drawn as more than one edge, and one click on it picks them all; a hole can
+        // also be picked at both its ends (#12191). The picks of one hole seat one part, at an
+        // open end: seated at a blind hole's floor it would stand on its head in the material.
+        match seats.iter().position(|(h, w)| *h == host && w.same_hole(&wall)) {
+            Some(i) => {
+                if !seats.get(i).is_some_and(|(_, w)| w.open)
+                    && wall.open
+                    && let (Some(seat), Some(hole)) = (seats.get_mut(i), holes.get_mut(i))
+                {
+                    *hole = (wall.at, host);
+                    seat.1 = wall;
+                }
+            }
+            None => {
+                holes.push((wall.at, host));
+                seats.push((host, wall));
+            }
         }
-        seats.push((host, seat));
-        holes.push((a, host));
     }
     let name = str_(p, "name").map(str::to_string).unwrap_or_else(|| part_name(&family, &size, &sh));
     let active = s.active_component;
@@ -3099,10 +3140,23 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
                 run(s, "occurrence.ground", json!({"occurrence": h, "grounded": true}))?;
             }
             let seat = if i == 0 { format!("{name} seat") } else { format!("{name} seat {}", i + 1) };
+            // A countersunk head sinks into the part: the foot of its cone, not its top, goes on
+            // the rim picked (where the hole's cylinder meets its countersink), moved along the
+            // axis by the bore's radius over the shank's, so that its 90 degree cone lies on the
+            // countersink's, whose cone is as wide as the head's at the face. The difference is
+            // signed: a clearance hole is wider than the shank and the cone goes deeper, a tap
+            // drill is narrower and the cone goes higher. With no bore known, there is no move.
+            let at_rim = match sh {
+                Shape::Screw { d, head: Head::Countersunk { k, .. }, .. } => {
+                    let clearance = seats.get(i).map_or(0.0, |(_, w)| if w.radius > 0.0 { w.radius - d / 2.0 } else { 0.0 });
+                    [0.0, 0.0, -k + clearance]
+                }
+                _ => [0.0, 0.0, 0.0],
+            };
             let j = run(
                 s,
                 "joint.create",
-                json!({"type": "rigid", "a": {"occurrence": h, "circle": a}, "b": {"occurrence": o, "point": [0, 0, 0], "z": z}, "name": seat}),
+                json!({"type": "rigid", "a": {"occurrence": h, "circle": a}, "b": {"occurrence": o, "point": at_rim, "z": z}, "name": seat}),
             );
             if hold {
                 run(s, "occurrence.ground", json!({"occurrence": h, "grounded": false}))?;
@@ -3152,10 +3206,46 @@ fn hole_picks(p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
     }
 }
 
-/// A point on the cylindrical wall of the hole at `a`, a little in from the picked rim, and the
-/// point on the hole's axis level with it (the same for every pick on one rim).
-fn hole_wall(s: &Session, a: Vec3) -> Option<(Vec3, Vec3)> {
-    // Picks are in world coordinates, including rims on already placed parts.
+/// Where a pick on a hole's rim seats a part.
+#[derive(Clone, Copy, Debug)]
+struct HoleWall {
+    /// A point on the hole's cylindrical wall, a little in from the picked rim.
+    at: Vec3,
+    /// The point on the hole's axis level with `at` (the same for every pick on one rim).
+    seat: Vec3,
+    /// The hole's axis, when the pick is on a hole.
+    axis: Option<Vec3>,
+    /// The two ends of the picked cylindrical wall, on the axis.
+    ends: Option<[Vec3; 2]>,
+    /// The picked rim opens onto air, not onto the floor of a blind hole.
+    open: bool,
+    /// The wall's radius (0 when the pick is not on a hole).
+    radius: f64,
+}
+
+impl HoleWall {
+    /// The two picks seat on one hole: at one point, or on one axis line with walls that meet.
+    /// Two blind holes drilled towards each other from opposite faces share an axis, but solid
+    /// material between their walls keeps them two holes.
+    fn same_hole(&self, other: &HoleWall) -> bool {
+        if (self.seat - other.seat).len() < 1e-3 {
+            return true;
+        }
+        match (self.axis, other.axis, self.ends, other.ends) {
+            (Some(a), Some(b), Some(e), Some(f)) if a.cross(b).len() < 1e-6 && (other.seat - self.seat).cross(a).len() < 1e-3 => {
+                let along = |p: Vec3| (p - self.seat).dot(a);
+                let ([e0, e1], [f0, f1]) = (e.map(along), f.map(along));
+                e0.min(e1) <= f0.max(f1) + 1e-3 && f0.min(f1) <= e0.max(e1) + 1e-3
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The wall of the hole at `a`, a little in from the picked rim, and whether that rim is an open
+/// end of the hole: just past it along the axis is not the body's material.
+fn hole_wall(s: &Session, a: Vec3) -> Option<HoleWall> {
+    // Picks are in world coordinates, including rims on already placed standard parts.
     let st = s.world_state().ok()?;
     let dirs = [Vec3::Z * -1.0, Vec3::Z, Vec3::X, Vec3::X * -1.0, Vec3::Y, Vec3::Y * -1.0];
     for step in [0.2, 0.5, 1.0, 2.0] {
@@ -3167,7 +3257,20 @@ fn hole_wall(s: &Session, a: Vec3) -> Option<(Vec3, Vec3)> {
                     let along = v.dot(c.axis);
                     let on_wall = ((v - c.axis * along).len() - c.radius).abs() < 1e-3 && along > c.start && along < c.end;
                     if on_wall {
-                        return Some((q, c.axis_point + c.axis * along));
+                        let axis: Vec3 = c.axis * 1.0;
+                        // The end of the wall nearer the pick, and a point on the axis just past it.
+                        let (end, out) = if along - c.start < c.end - along { (c.start, -1.0) } else { (c.end, 1.0) };
+                        let past = c.axis_point + axis * (end + out * (c.end - c.start).min(1.0) * 0.25);
+                        let open = !matches!(b.body.classify_point(past), Ok(solidcraft_doc::kernel::PointClass::Inside));
+                        let ends = [c.axis_point + axis * c.start, c.axis_point + axis * c.end];
+                        return Some(HoleWall {
+                            at: q,
+                            seat: c.axis_point + axis * along,
+                            axis: Some(axis),
+                            ends: Some(ends),
+                            open,
+                            radius: c.radius,
+                        });
                     }
                 }
             }
@@ -4119,6 +4222,91 @@ mod tests {
         assert_eq!(number, Some("ISO 7380-1 M6x20"));
     }
 
+    /// #13361: a countersunk socket screw (ISO 10642) takes the same parameters as the other
+    /// screws, with a 90° cone sunk below its seating plane: the top of the head is level with
+    /// the face, and the length counts the head.
+    #[test]
+    fn a_countersunk_head_is_a_cone_sunk_below_the_seating_plane() {
+        let l = run(&mut Session::default(), "parts.library", json!({"family": "countersunk_socket_screw"}));
+        let row = |size: &str| l["sizes"].as_array().and_then(|a| a.iter().find(|x| x["size"] == size)).cloned().unwrap_or_default();
+        let m6 = row("M6");
+        let dims = [&m6["head_diameter"], &m6["head_height"], &m6["socket"], &m6["socket_depth"]].map(|v| v.as_f64());
+        assert_eq!(dims, [Some(13.44), Some(3.72), Some(4.0), Some(2.2)]);
+        // M2 and M2.5 are left out (one source only), and the cone is 90° at every size: k is half
+        // the way from the shank to dk.
+        let sizes: Vec<&str> = l["sizes"].as_array().map(|a| a.iter().filter_map(|x| x["size"].as_str()).collect()).unwrap_or_default();
+        assert_eq!(sizes, ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M14", "M16", "M20"]);
+        for size in sizes {
+            let (d, dk, k) = (
+                row(size)["d"].as_f64().unwrap_or(0.0),
+                row(size)["head_diameter"].as_f64().unwrap_or(0.0),
+                row(size)["head_height"].as_f64().unwrap_or(0.0),
+            );
+            assert!(((dk - d) / 2.0 - k).abs() < 0.006, "{size}: dk {dk}, d {d}, k {k}");
+        }
+        assert!(l["lengths"].as_array().is_some_and(|a| !a.is_empty()), "{l}");
+        // An M6 x 20: head Ø13.44 at the top, which is z = 0; the whole 20 hangs below it.
+        let mut s = Session::default();
+        run(&mut s, "parts.insert", json!({"family": "countersunk_socket_screw", "size": "M6", "length": 20}));
+        let (lo, hi) = bbox(&s, "CSK M6x20");
+        assert!((hi.x - lo.x - 13.44).abs() < 1e-3 && (lo.z + 20.0).abs() < 1e-6 && hi.z.abs() < 1e-6, "{lo:?} {hi:?}");
+        assert!(s.model.state().threads.iter().any(|t| t.designation.starts_with("M6")), "{:?}", s.model.state().threads);
+        // The profile: the rim at the top, the shank (Ø6) below the cone, and the cone's foot
+        // 3.72 down, where it meets the shank.
+        let st = s.world_state().unwrap();
+        let points: Vec<_> = st.bodies.iter().flat_map(|b| b.mesh().positions.clone()).collect();
+        let radius = |p: &solidcore_record::Vec3| p.x.hypot(p.y);
+        let rim = points.iter().filter(|p| p.z > -0.01).map(radius).fold(0.0, f64::max);
+        let shank = points.iter().filter(|p| p.z < -3.8).map(radius).fold(0.0, f64::max);
+        // The cone's foot is the highest ring of the shank's radius below the top; the mesh
+        // splits the cone itself into rings of its own, so the cone is not measured by vertices.
+        let foot = points.iter().filter(|p| (radius(p) - 3.0).abs() < 1e-3 && p.z < -0.5).map(|p| p.z).fold(f64::MIN, f64::max);
+        assert!((rim - 6.72).abs() < 1e-3, "the rim: {rim}");
+        assert!((shank - 3.0).abs() < 1e-3, "the shank: {shank}");
+        assert!((foot + 3.72).abs() < 1e-3, "the cone's foot: {foot}");
+        let comp = s.doc.components.iter().find(|c| c.name.starts_with("CSK")).map(|c| c.id).unwrap_or(0);
+        let number = s.doc.components.iter().find(|c| c.id == comp).and_then(|c| c.metadata.text(solidcraft_doc::metadata::PART_NUMBER));
+        assert_eq!(number, Some("ISO 10642 M6x20"));
+        // The length counts the head, so one no longer than the head is refused, and nothing is made.
+        let mut short = Session::default();
+        assert!(short.execute("parts.insert", &json!({"family": "countersunk_socket_screw", "size": "M20", "length": 8})).is_err());
+        assert!(short.doc.components.is_empty());
+    }
+
+    /// #13361: seated at a countersunk hole (picked where the countersink meets the bore), the
+    /// head's cone lies in the countersink and its top is level with the face, not at the bore.
+    #[test]
+    fn a_countersunk_screw_seats_flush_in_a_countersunk_hole() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": "Plate"}));
+        let hole = json!({"position": [20, 15, 10], "type": "countersink", "diameter": 6.6, "cs_diameter": 13.44, "cs_angle": "90 deg", "depth": 10});
+        run(&mut s, "solid.hole", hole);
+        let r = run(&mut s, "parts.fastener", json!({"family": "countersunk_socket_screw", "size": "M6", "length": 20, "at": [23.3, 15, 6.4]}));
+        assert!(r["joint"].as_u64().is_some(), "{r}");
+        // The plate's face is z = 10: the head's top is there, and the 20 mm length hangs from it.
+        let (lo, hi) = bbox(&s, "CSK M6x20");
+        assert!((hi.z - 10.0).abs() < 0.02 && (lo.z + 10.0).abs() < 0.02, "{lo:?} {hi:?}");
+        assert!((hi.x - lo.x - 13.44).abs() < 1e-3, "{lo:?} {hi:?}");
+    }
+
+    /// #13361: in a tapped countersink the bore is a tap drill, narrower than the screw's shank, so
+    /// the cone sits higher on the rim than in a clearance hole, and the head is still level with
+    /// the face (it was 0.6 mm off for an M8 when the difference of the radii was cut off at 0).
+    #[test]
+    fn a_countersunk_screw_seats_flush_in_a_tapped_countersink() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": "Plate"}));
+        let hole =
+            json!({"position": [20, 15, 10], "type": "countersink", "thread": "M8x1.25", "cs_diameter": 17.92, "cs_angle": "90 deg", "depth": 10});
+        run(&mut s, "solid.hole", hole);
+        // The tap drill is 6.8, so the bore's wall is at r = 3.4 and meets the countersink at z = 4.44.
+        let r = run(&mut s, "parts.fastener", json!({"family": "countersunk_socket_screw", "size": "M8", "length": 20, "at": [23.4, 15, 4.3]}));
+        assert!(r["joint"].as_u64().is_some(), "{r}");
+        let (lo, hi) = bbox(&s, "CSK M8x20");
+        assert!((hi.z - 10.0).abs() < 0.02 && (lo.z + 10.0).abs() < 0.02, "{lo:?} {hi:?}");
+        assert!((hi.x - lo.x - 17.92).abs() < 1e-3, "{lo:?} {hi:?}");
+    }
+
     #[test]
     fn a_screw_seats_on_a_translated_washer() {
         for z in [11.6, 11.2] {
@@ -4153,6 +4341,27 @@ mod tests {
         let (lo, hi) = bbox(&s, "SHCS M8x20");
         assert!(lo.dist(solidcore_record::Vec3::new(21.6, 43.5, 53.5)) < 1e-6, "{lo:?}");
         assert!(hi.dist(solidcore_record::Vec3::new(49.6, 56.5, 66.5)) < 1e-6, "{hi:?}");
+    }
+
+    /// #11729: placed at a point, the part's seating plane is at `point` and `direction` points
+    /// from the shank's tip toward the head, as the help now says: `[0, 0, 1]` puts a screw head
+    /// up with its shank down into a plate's top face, `[0, 0, -1]` upside down.
+    #[test]
+    fn a_part_placed_at_a_point_points_its_head_along_direction() {
+        let help = super::COMMANDS.iter().find(|c| c.id == "parts.insert").map(|c| c.params).unwrap_or_default();
+        assert!(help.contains("seating plane") && help.contains("from the shank's tip toward the head"), "{help}");
+        for (direction, head_up) in [([0, 0, 1], true), ([0, 0, -1], false)] {
+            let mut s = Session::default();
+            run(
+                &mut s,
+                "parts.insert",
+                json!({"family": "socket_head_cap_screw", "size": "M6", "length": 20, "point": [5, 5, 10], "direction": direction}),
+            );
+            let (lo, hi) = bbox(&s, "SHCS M6x20");
+            // The 6 mm head on one side of z = 10, the 20 mm shank on the other.
+            let (head, shank) = if head_up { (hi.z - 10.0, 10.0 - lo.z) } else { (10.0 - lo.z, hi.z - 10.0) };
+            assert!((head - 6.0).abs() < 1e-6 && (shank - 20.0).abs() < 1e-6, "{direction:?}: {lo:?} {hi:?}");
+        }
     }
 
     /// Several holes in one insert: one component placed and seated once per hole, in one undo
@@ -4203,11 +4412,68 @@ mod tests {
         assert_eq!((s.doc.components.len(), s.doc.occurrences.len()), (comps, occs));
     }
 
+    /// #12191: a hole picked at both ends (a blind hole's rim and its floor edge, a through
+    /// hole's top and bottom rims) gets one fastener, head at the open end, not a second one
+    /// turned over.
+    #[test]
+    fn a_hole_picked_at_both_ends_gets_one_fastener_at_its_open_end() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Block"}));
+        let blind = [(8.0, 8.0), (32.0, 8.0), (32.0, 22.0)];
+        for (x, y) in blind {
+            run(&mut s, "solid.hole", json!({"position": [x, y, 20], "diameter": 3.4, "depth": 10}));
+        }
+        let through = (8.0, 22.0);
+        run(&mut s, "solid.hole", json!({"position": [through.0, through.1, 20], "diameter": 3.4}));
+        // The first blind hole is picked at its floor edge first, then at its rim; the second at
+        // its rim, then its floor; the third at its rim only; the through hole at both rims.
+        let rim = |(x, y): (f64, f64), z: f64| json!([x + 1.7, y, z]);
+        let at = vec![
+            rim(blind[0], 10.0),
+            rim(blind[0], 20.0),
+            rim(blind[1], 20.0),
+            rim(blind[1], 10.0),
+            rim(blind[2], 20.0),
+            rim(through, 20.0),
+            rim(through, 0.0),
+        ];
+        let r = run(&mut s, "parts.fastener", json!({"family": "socket_head_cap_screw", "size": "M3", "length": 8, "at": at}));
+        let comp = r["component"].as_u64().unwrap_or(0);
+        assert_eq!(r["occurrences"].as_array().map(Vec::len), Some(4), "one screw per hole: {r}");
+        let st = s.world_state().unwrap();
+        let mut seated: Vec<(f64, f64)> = Vec::new();
+        for b in st.bodies.iter().filter(|b| s.doc.model_body_component(b) == comp) {
+            let (lo, hi) = (b.mesh().bounds().min, b.mesh().bounds().max);
+            // Head on the top face (3 mm tall), shank 8 mm down the hole.
+            assert!((hi.z - 23.0).abs() < 1e-6 && (lo.z - 12.0).abs() < 1e-6, "{lo:?} {hi:?}");
+            seated.push(((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0));
+        }
+        assert_eq!(seated.len(), 4, "{seated:?}");
+        for (x, y) in blind.into_iter().chain([through]) {
+            assert!(seated.iter().any(|c| (c.0 - x).abs() < 1e-6 && (c.1 - y).abs() < 1e-6), "no screw at ({x}, {y}): {seated:?}");
+        }
+    }
+
+    /// #12191: two blind holes drilled towards each other from opposite faces share an axis, but
+    /// the material between them keeps them two holes: each rim picked gets its own fastener.
+    #[test]
+    fn coaxial_blind_holes_from_opposite_faces_get_a_fastener_each() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Block"}));
+        run(&mut s, "solid.hole", json!({"position": [20, 15, 20], "diameter": 3.4, "depth": 6}));
+        run(&mut s, "solid.hole", json!({"position": [20, 15, 0], "direction": [0, 0, 1], "diameter": 3.4, "depth": 6}));
+        let at = json!([[21.7, 15, 20], [21.7, 15, 0]]);
+        let r = run(&mut s, "parts.fastener", json!({"family": "socket_head_cap_screw", "size": "M3", "length": 6, "at": at}));
+        assert_eq!(r["occurrences"].as_array().map(Vec::len), Some(2), "one screw per hole: {r}");
+    }
+
+    /// Every family's sketches are fully defined when the part is inserted and when it is resized.
     #[test]
     fn every_sketch_of_a_standard_part_is_fully_defined() {
         for (family, size, resized) in [
             ("socket_head_cap_screw", "M6", "M8"),
             ("button_head_cap_screw", "M6", "M8"),
+            ("countersunk_socket_screw", "M6", "M8"),
             ("hex_bolt", "M6", "M8"),
             ("hex_nut", "M6", "M8"),
             ("washer", "M6", "M8"),
@@ -4232,11 +4498,13 @@ mod tests {
         }
     }
 
+    /// A placed part is resized in its own frame and in millimetres, whatever the design's units.
     #[test]
     fn resizing_placed_parts_uses_local_geometry_and_millimetres_in_every_design_unit() {
         for (family, initial, resized, prefix) in [
             ("socket_head_cap_screw", "M6", "M8", "SHCS"),
             ("button_head_cap_screw", "M6", "M8", "BHCS"),
+            ("countersunk_socket_screw", "M6", "M8", "CSK"),
             ("hex_bolt", "M6", "M8", "Hex Bolt"),
             ("hex_nut", "M6", "M8", "Hex Nut"),
             ("washer", "M6", "M8", "Washer"),
@@ -4253,7 +4521,10 @@ mod tests {
                 assert!(s.model.results.iter().all(|r| r.error.is_none()), "{family} {units}");
                 let b = bbox(&s, prefix);
                 assert!(b.0.x < b.1.x && b.0.y < b.1.y && b.0.z < b.1.z, "{family} {units}: {b:?}");
-                if matches!(family, "socket_head_cap_screw" | "button_head_cap_screw" | "hex_bolt" | "hex_nut" | "set_screw") {
+                if matches!(
+                    family,
+                    "socket_head_cap_screw" | "button_head_cap_screw" | "countersunk_socket_screw" | "hex_bolt" | "hex_nut" | "set_screw"
+                ) {
                     assert!(s.model.state().threads.iter().any(|t| t.designation == "M8" && (t.pitch - 1.25).abs() < 1e-9), "{family} {units}");
                 }
                 if family == "dowel_pin" {

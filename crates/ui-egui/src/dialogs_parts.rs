@@ -19,7 +19,7 @@ use solidcraft_engine::{Sel, Session};
 use crate::SolveApp;
 use crate::dialogs::{Kind, combo, form_row};
 use crate::selection::{EDGES, FACES, SelInput};
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// One family of the library.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,8 +48,8 @@ pub struct Family {
 /// by its English name as a label: the library's own name for a family the catalogs don't know.
 pub(crate) fn family_name(f: &Family) -> String {
     let id = format!("parts.family.{}", f.id);
-    match crate::i18n::tr(&id) {
-        shown if shown == id => crate::i18n::tr_label(&f.name).to_string(),
+    match solidcraft_ui_text::tr(&id) {
+        shown if shown == id => solidcraft_ui_text::tr_label(&f.name).to_string(),
         shown => shown.to_string(),
     }
 }
@@ -333,7 +333,7 @@ impl Options {
     pub fn rows(&mut self, ui: &mut egui::Ui, f: &Family) {
         let takes = |o: &str| f.options.iter().any(|x| x == o);
         if takes("bore") {
-            text_row(ui, "Bore", &mut self.bore, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Bore", &mut self.bore, solidcraft_ui_text::tr("parts.automatic_name"));
         }
         if takes("helix_angle") {
             text_row(ui, "Helix angle", &mut self.helix, "20°");
@@ -342,13 +342,13 @@ impl Options {
             text_row(ui, "Starts", &mut self.starts, "1");
         }
         if takes("drive") {
-            let names: Vec<&str> = f.drives.iter().map(|d| crate::i18n::tr_label(&d.1)).collect();
+            let names: Vec<&str> = f.drives.iter().map(|d| solidcraft_ui_text::tr_label(&d.1)).collect();
             let mut at = f.drives.iter().position(|d| d.0 == self.drive).unwrap_or(0);
             choice_row(ui, "Drive", "pt_drive", &mut at, &names);
             self.drive = f.drives.get(at).map(|d| d.0.clone()).unwrap_or_default();
         }
         if takes("thread") {
-            let kinds = [crate::i18n::tr_label("Cosmetic"), crate::i18n::tr_label("Modeled (slower)")];
+            let kinds = [solidcraft_ui_text::tr_label("Cosmetic"), solidcraft_ui_text::tr_label("Modeled (slower)")];
             let mut at = usize::from(self.modeled);
             choice_row(ui, "Thread", "pt_thread", &mut at, &kinds);
             self.modeled = at == 1;
@@ -373,19 +373,19 @@ impl Options {
             text_row(ui, "Offset hole Ø", &mut self.hole_diameter, "none");
         }
         if takes("hub_diameter") {
-            text_row(ui, "Hub Ø (seat)", &mut self.hub_diameter, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Hub Ø (seat)", &mut self.hub_diameter, solidcraft_ui_text::tr("parts.automatic_name"));
         }
         if takes("hub_length") {
-            text_row(ui, "Hub length", &mut self.hub_length, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Hub length", &mut self.hub_length, solidcraft_ui_text::tr("parts.automatic_name"));
         }
         if takes("mate_bore") {
-            text_row(ui, "Mate's bore", &mut self.mate_bore, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Mate's bore", &mut self.mate_bore, solidcraft_ui_text::tr("parts.automatic_name"));
         }
         if takes("mate_hub_diameter") {
-            text_row(ui, "Mate's hub Ø", &mut self.mate_hub_diameter, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Mate's hub Ø", &mut self.mate_hub_diameter, solidcraft_ui_text::tr("parts.automatic_name"));
         }
         if takes("mate_hub_length") {
-            text_row(ui, "Mate's hub length", &mut self.mate_hub_length, crate::i18n::tr("parts.automatic_name"));
+            text_row(ui, "Mate's hub length", &mut self.mate_hub_length, solidcraft_ui_text::tr("parts.automatic_name"));
         }
     }
 }
@@ -687,7 +687,7 @@ fn picture(ctx: &egui::Context, params: &Value) -> Shown {
         m.remove("name");
     }
     let key = p.to_string();
-    let pictures = ctx.data_mut(|d| d.get_temp_mut_or_default::<Pictures>(egui::Id::new("sc_part_pictures")).clone());
+    let pictures = ctx.data_mut(|d| d.get_temp_mut_or_default::<Pictures>(egui::Id::unique("sc_part_pictures")).clone());
     {
         let Ok(mut shelf) = pictures.0.lock() else { return Shown::Missing };
         for (k, s) in std::mem::take(&mut shelf.built) {
@@ -749,7 +749,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     let lib = loaded(app, k);
     if lib.is_empty() {
         ui.vertical(|ui| {
-            crate::ui_kit::text(ui, crate::i18n::tr_label("the parts library is not available"), crate::ui_kit::Text::Note("parts_unavailable"));
+            crate::ui_kit::text(ui, solidcraft_ui_text::tr_label("the parts library is not available"), crate::ui_kit::Text::Note("parts_unavailable"));
         });
         return false;
     }
@@ -763,7 +763,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         let mut picked = None;
         ui.vertical(|ui| {
             if k.hits.is_empty() {
-                crate::ui_kit::text(ui, crate::i18n::tr_label("nothing in the library matches"), crate::ui_kit::Text::Note("parts_no_match"));
+                crate::ui_kit::text(ui, solidcraft_ui_text::tr_label("nothing in the library matches"), crate::ui_kit::Text::Note("parts_no_match"));
             }
             for (i, h) in k.hits.iter().enumerate() {
                 if list_picker(ui, &format!("part_hit_{i}"), &h.label, false).clicked() {
@@ -784,7 +784,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     } else {
         let mut system = SYSTEMS.iter().position(|s| s.0 == current).unwrap_or(0);
         let was = system;
-        let labels = SYSTEMS.map(|s| crate::i18n::tr_label(s.1));
+        let labels = SYSTEMS.map(|s| solidcraft_ui_text::tr_label(s.1));
         choice_row(ui, "Unit system", "pt_system", &mut system, &labels);
         let id = SYSTEMS.get(system).map_or("metric", |s| s.0).to_string();
         if system != was
@@ -807,7 +807,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             sample["point"] = json!([0.0, 0.0, 0.0]);
             sample["direction"] = json!([0.0, 0.0, 1.0]);
             let shown = picture(ui.ctx(), &sample);
-            if picture_tile(ui, &c.id, shown.texture(), crate::i18n::tr_label(&c.name), c.id == here, size).clicked() {
+            if picture_tile(ui, &c.id, shown.texture(), solidcraft_ui_text::tr_label(&c.name), c.id == here, size).clicked() {
                 chosen = Some(*i);
             }
         });
@@ -849,7 +849,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         }
     }
     if !series.is_empty() {
-        let mut labels = vec![crate::i18n::tr_label("All").to_string()];
+        let mut labels = vec![solidcraft_ui_text::tr_label("All").to_string()];
         labels.extend(series.iter().cloned());
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let mut at = series.iter().position(|s| *s == k.series).map_or(0, |i| i + 1);
@@ -892,7 +892,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
                 });
             }
             None => {
-                let mut labels = vec![crate::i18n::tr_label("Default").to_string()];
+                let mut labels = vec![solidcraft_ui_text::tr_label("Default").to_string()];
                 labels.extend(lengths);
                 let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
                 let mut i = k.length.map_or(0, |x| x + 1);
@@ -907,7 +907,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     // As made with the options above (the table below gives the size's defaults).
     let made = if k.gears { insert_params(&lib, k, &[]).ok() } else { None };
     diameter_rows(app, ui, &mut k.dia, made);
-    text_row(ui, "Name", &mut k.name, crate::i18n::tr("parts.automatic_name"));
+    text_row(ui, "Name", &mut k.name, solidcraft_ui_text::tr("parts.automatic_name"));
     // The part (its picture follows every field that shapes it), and its table values.
     let shown = insert_params(&lib, k, &[]).ok().map_or(Shown::Missing, |p| picture(ui.ctx(), &p));
     ui.vertical(|ui| match shown {
@@ -915,10 +915,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
             ui.add(egui::Image::new(&tx).fit_to_exact_size(vec2(180.0, 112.0)).corner_radius(t.radius_sm));
         }
         Shown::Building => {
-            crate::ui_kit::text(ui, crate::i18n::tr_label("building the picture…"), crate::ui_kit::Text::Note("parts_picture"));
+            crate::ui_kit::text(ui, solidcraft_ui_text::tr_label("building the picture…"), crate::ui_kit::Text::Note("parts_picture"));
         }
         Shown::Missing => {
-            crate::ui_kit::text(ui, crate::i18n::tr_label("no picture"), crate::ui_kit::Text::Note("parts_picture"));
+            crate::ui_kit::text(ui, solidcraft_ui_text::tr_label("no picture"), crate::ui_kit::Text::Note("parts_picture"));
         }
     });
     if let Some((_, row)) = f.sizes.get(k.size)
@@ -928,7 +928,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
         let made = |key: &str| matches!(key, "pitch_diameter" | "outside_diameter" | "root_diameter" | "base_diameter" | "cone_angle");
         // `default_length` picks the Length list's opening value; it is not a dimension.
         for (key, v) in o.iter().filter(|(key, _)| !matches!(key.as_str(), "size" | "label" | "default_length") && !(k.gears && made(key))) {
-            let label = dimension_label(key).map_or_else(|| key.replace('_', " "), |l| crate::i18n::tr(l).to_string());
+            let label = dimension_label(key).map_or_else(|| key.replace('_', " "), |l| solidcraft_ui_text::tr(l).to_string());
             form_row(ui, &label, |ui| {
                 crate::ui_kit::text(
                     ui,
@@ -948,7 +948,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     }
     if inputs.first().is_some_and(|i| i.items.is_empty()) {
         ui.vertical(|ui| {
-            crate::ui_kit::text(ui, crate::i18n::tr("parts.placement_hint"), crate::ui_kit::Text::Note("parts_placement"));
+            crate::ui_kit::text(ui, solidcraft_ui_text::tr("parts.placement_hint"), crate::ui_kit::Text::Note("parts_placement"));
         });
     }
     false
@@ -994,9 +994,10 @@ mod tests {
     /// catalogs don't know keeps the library's name.
     #[test]
     fn family_names_follow_the_language() {
+        crate::i18n::install();
         let l = families(&solidcraft_engine::Session::default().execute("parts.library", &json!({})).unwrap());
         let fasteners = ["socket_head_cap_screw", "button_head_cap_screw", "hex_bolt", "hex_nut", "washer", "set_screw", "dowel_pin", "bearing"];
-        let _german = crate::i18n::scope("de");
+        let _german = solidcraft_ui_text::scope("de");
         for f in l.iter().filter(|f| fasteners.contains(&f.id.as_str())) {
             assert_ne!(family_name(f), f.name, "{}", f.id);
         }
@@ -1043,6 +1044,7 @@ mod tests {
     /// Every dimension the library gives for a size is labelled in words, in each family.
     #[test]
     fn every_library_dimension_has_a_label_in_words() {
+        crate::i18n::install();
         let mut s = solidcraft_engine::Session::default();
         let l = families(&s.execute("parts.library", &json!({})).unwrap());
         assert!(l.len() >= 7, "{}", l.len());
@@ -1050,7 +1052,7 @@ mod tests {
         for f in &l {
             for (_, row) in &f.sizes {
                 for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| !matches!(k.as_str(), "size" | "default_length" | "label")) {
-                    let label = dimension_label(key).map(crate::i18n::tr);
+                    let label = dimension_label(key).map(solidcraft_ui_text::tr);
                     if !label.is_some_and(|l| l.starts_with(char::is_uppercase) && !l.contains('_') && !l.starts_with("parts.")) {
                         unlabelled.insert(format!("{key} ({})", f.id));
                     }
