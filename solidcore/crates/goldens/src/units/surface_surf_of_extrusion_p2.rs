@@ -1633,7 +1633,287 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solidcore::math::EFF_ZERO_SQRT;
     use std::collections::BTreeMap;
+
+    /// The generator segment's start, its direction, the sweep vector and the plane of
+    /// `gen1053`, from its inputs.
+    fn gen1053_frame(v: &Value) -> [Vec3; 6] {
+        let p = |x: &Value| Vec3::new(x[0].as_f64().unwrap(), x[1].as_f64().unwrap(), x[2].as_f64().unwrap());
+        let cpts = &v["surf"]["gen"]["cpts"];
+        let (c0, c1) = (p(&cpts[0]), p(&cpts[1]));
+        let plane = &v["plane"];
+        [c0, c1 - c0, p(&v["surf"]["build"]["vec"]), p(&plane["o"]), p(&plane["x"]), p(&plane["y"])]
+    }
+
+    /// The position of `q` in the frame of the extrusion of segment `c0 + a g` along `w`:
+    /// `(a, distance off the extrusion's plane, distance off the target plane)`.
+    fn on_strip(f: &[Vec3; 6], q: Vec3) -> (f64, f64, f64) {
+        let [c0, g, w, o, x, y] = *f;
+        let n = g.cross(w);
+        let n = n * (1.0 / n.length());
+        let r = q - c0;
+        let off = r.dot(n);
+        let r = r - n * off;
+        // r = a g + b w in the extrusion's plane
+        let (gg, gw, ww) = (g.dot(g), g.dot(w), w.dot(w));
+        let (rg, rw) = (r.dot(g), r.dot(w));
+        let a = (rg * ww - rw * gw) / (gg * ww - gw * gw);
+        let pn = x.cross(y);
+        let pn = pn * (1.0 / pn.length());
+        (a, off.abs(), (q - o).dot(pn).abs())
+    }
+
+    /// #18342: `gen1053` intersects the extrusion of a 6.9e-4 long line segment with a
+    /// plane. Its one intersection curve is now the whole chord across the extrusion: it
+    /// ends on both planes (within 1e-9), one end on the edge swept by the segment's start
+    /// (`a` = 0) and the other on the edge swept by its far end (`a` = 1), each within
+    /// `SM_EFF_ZERO_SQRT` (1e-6, the bound of the operation's tolerance) in 3D. The first is
+    /// 3.9e-7 past the `a` = 0 edge, the second 6.7e-7 inside the `a` = 1 edge, so a curve
+    /// cut short inside the strip fails. The old row's two curves ended at points on the
+    /// planes but up to 7.6e4 outside the swept segment; they fail the same check.
+    #[test]
+    fn gen1053_intersection_ends_lie_on_the_extrusion() {
+        let case = crate::case::regression_case(&Runner, "gen1053");
+        let f = gen1053_frame(&case.inputs);
+        let i: Inputs = case.parse().unwrap();
+        let out = rust(&i).unwrap();
+        let o = out.values.get("out").unwrap().clone();
+        let glen = f[1].length();
+        // the 3D distance past the swept segment's ends of a point at `a`
+        let outside = |a: f64| (-a).max(a - 1.0).max(0.0) * glen;
+        // status, status, one curve, ..., its two end points
+        assert_eq!((o[0], o[1], o[2], o[9]), (0.0, 0.0, 1.0, 2.0), "{o:?}");
+        let mut ends = Vec::new();
+        for at in [10usize, 14] {
+            let (a, off, off_plane) = on_strip(&f, Vec3::new(o[at], o[at + 1], o[at + 2]));
+            assert!(outside(a) <= EFF_ZERO_SQRT, "{at}: {a:e}");
+            assert!(off < 1e-9 && off_plane < 1e-9, "{at}: {off:e} {off_plane:e}");
+            ends.push(a);
+        }
+        // the whole chord: one end on each swept edge, within the tolerance in 3D
+        ends.sort_by(f64::total_cmp);
+        assert!(ends[0].abs() * glen <= EFF_ZERO_SQRT, "{ends:?}");
+        assert!((ends[1] - 1.0).abs() * glen <= EFF_ZERO_SQRT, "{ends:?}");
+        // the old row's ends that the new one replaced (measured with the rules off)
+        for q in [
+            Vec3::new(1092.3570614157895, 5731.732333415699, -3560.217776102151),
+            Vec3::new(360.0721726580956, -4029.0217729108645, -2500.4128777293017),
+        ] {
+            let (a, _, _) = on_strip(&f, q);
+            assert!(outside(a) > 1.0, "{q:?}: {a:e}");
+        }
+    }
+
+    /// WR-51: `GlobalSurfaceIntersect` cases where the boundary search dropped its
+    /// touching point for a start point that then traced nothing, so upstream found
+    /// no curve. The touching point is now the answer, certified on both surfaces and
+    /// within the intersector's tolerance.
+    #[test]
+    fn wr51_restored_touching_points_are_certified_contacts() {
+        use solidcore::intersect::surface_intersector::SurfaceIntersector;
+        let names = [
+            "global_extrusion_skew",
+            "global_bspline",
+            "gen0463",
+            "gen0581",
+            "gen0626",
+            "gen1018",
+        ];
+        for name in names {
+            let case = crate::case::regression_case(&Runner, name);
+            let Inputs::Op { src, op } = case.parse().unwrap() else {
+                panic!("{name}: expected an operation");
+            };
+            let OpIn::Global {
+                target,
+                dom,
+                other_dom,
+                tol,
+                ang,
+            } = &*op
+            else {
+                panic!("{name}: expected GlobalSurfaceIntersect");
+            };
+            let k = Kernel::default();
+            let first = rust_src(&k, &src)
+                .unwrap()
+                .unwrap_or_else(|_| panic!("{name}: the extrusion builds"));
+            let d = dom.map_or_else(|| first.base().natural_uv_domain(), dom4);
+            let (other, od) = match target {
+                TargetIn::Cone { cone } => {
+                    let c = rust_cone(&k, cone).unwrap();
+                    let od = other_dom.map_or_else(|| c.rev().base().natural_uv_domain(), dom4);
+                    (Surface::from(c), od)
+                }
+                TargetIn::Extrusion { other } => {
+                    let e = rust_src(&k, other).unwrap().unwrap_or_else(|_| panic!("{name}"));
+                    let od = other_dom.map_or_else(|| e.base().natural_uv_domain(), dom4);
+                    (Surface::from(e), od)
+                }
+                TargetIn::Bspline { other } => {
+                    let e = rust_src(&k, other).unwrap().unwrap_or_else(|_| panic!("{name}"));
+                    let b = nurb_surface(&e).unwrap();
+                    let od = other_dom.map_or_else(|| b.natural_uv_domain(), dom4);
+                    (Surface::from(b), od)
+                }
+                TargetIn::Plane { .. } => panic!("{name}: no plane target here"),
+            };
+            let this = Surface::from(first);
+            let default_tol = SurfaceIntersector::new(&k, &this, &d, &other, &od, false)
+                .unwrap()
+                .this_approx_tol_3d;
+            let r = this
+                .global_surface_intersect(&k, &d, &other, &od, [true, true], *tol, *ang)
+                .unwrap();
+            crate::units::intersect_surface_intersector_p5::certify_restored_touching_point(
+                &k,
+                [&this, &other],
+                [&d, &od],
+                tol.unwrap_or(default_tol),
+                &r,
+            );
+        }
+    }
+
+    /// The default SSI tolerance comes from the unbounded surface's size, not the
+    /// kernel's approximation tolerance. This case returns a coarse touching point;
+    /// its finite status and coordinates must remain observable despite NOW weights.
+    #[test]
+    fn review_global_touching_point_is_checked_outside_infinite_sums() {
+        use crate::units::surface_surf_of_extrusion_p1::GenIn;
+        use solidcore::intersect::surface_intersector::SurfaceIntersector;
+        use solidcore::nurbs::math::gamma;
+        use solidcore::surface::surface::p2::TsectCurveType;
+
+        fn circle_end(s: &SrcIn, end: bool, height: f64) -> Vec3 {
+            let SrcIn::Built { surf } = s else {
+                panic!("expected the generated canonical extrusion");
+            };
+            let GenIn::Circle { c, x, y, d, r } = &surf.gen else {
+                panic!("expected its circular generator");
+            };
+            let BuildIn::Canonical { vec } = &surf.build else {
+                panic!("expected the canonical sweep vector");
+            };
+            let (sin, cos) = d[usize::from(end)].to_radians().sin_cos();
+            v3(*c) + v3(*x) * (*r * cos) + v3(*y) * (*r * sin) + v3(*vec) * height
+        }
+
+        let case = crate::case::regression_case(&Runner, "gen1140");
+        let inputs: Inputs = case.parse().unwrap();
+        let Inputs::Op { src, op } = &inputs else {
+            panic!("expected GlobalSurfaceIntersect");
+        };
+        let OpIn::Global {
+            target: TargetIn::Extrusion { other },
+            dom: None,
+            other_dom: None,
+            tol: None,
+            ang,
+        } = &**op
+        else {
+            panic!("expected the generated default-tolerance extrusion pair");
+        };
+
+        let k = Kernel::default();
+        let first = rust_src(&k, src)
+            .unwrap()
+            .unwrap_or_else(|_| panic!("first generated extrusion must build"));
+        let second = rust_src(&k, other)
+            .unwrap()
+            .unwrap_or_else(|_| panic!("second generated extrusion must build"));
+        let d1 = first.base().natural_uv_domain();
+        let d2 = second.base().natural_uv_domain();
+        let s1 = Surface::from(first.clone());
+        let s2 = Surface::from(second.clone());
+        let default_tol = SurfaceIntersector::new(&k, &s1, &d1, &s2, &d2, false)
+            .unwrap()
+            .this_approx_tol_3d;
+        let expected_tol = first.extrusion_vector().length() * d1.v_interval().length() / 1000.0;
+        assert!((default_tol - expected_tol).abs() <= gamma(32) * expected_tol);
+
+        let result = s1
+            .global_surface_intersect(&k, &d1, &s2, &d2, [true, true], None, *ang)
+            .unwrap();
+        assert_eq!(result.curves_3d.len(), 1);
+        assert_eq!(result.curve_types, [TsectCurveType::Touching]);
+        assert_eq!(result.surface1_uv_curves.len(), 1);
+        assert_eq!(result.surface2_uv_curves.len(), 1);
+        assert_eq!(result.deviations.len(), 1);
+        let uv1 = result.surface1_uv_curves[0]
+            .as_ref()
+            .unwrap()
+            .evaluate_point(&k, 0.5)
+            .unwrap();
+        let uv2 = result.surface2_uv_curves[0]
+            .as_ref()
+            .unwrap()
+            .evaluate_point(&k, 0.5)
+            .unwrap();
+        assert_eq!(uv1.x, d1.min().x);
+        assert_eq!(uv2.x, d2.max().x);
+        assert!(d1.contains_point(Point2::new(uv1.x, uv1.y), 0.0));
+        assert!(d2.contains_point(Point2::new(uv2.x, uv2.y), 0.0));
+
+        // At these generator endpoints the exact definitions are the circle ends
+        // plus the sweep vector times v. No spline fit supplies these reference points.
+        let p1 = circle_end(src, false, uv1.y);
+        let p2 = circle_end(other, true, uv2.y);
+        let midpoint = (p1 + p2) * 0.5;
+        let mut scale = 1.0_f64;
+        for source in [&first, &second] {
+            let net = source.base().gw_nurb().unwrap();
+            assert_eq!(net.degrees(), (2, 1));
+            for p in net.rows().flatten() {
+                let weight = if p.w == NOW { 1.0 } else { p.w };
+                assert!(weight > 0.0);
+                scale = scale.max((p.x.abs() + p.y.abs() + p.z.abs()) / weight);
+            }
+        }
+        // Two degree-(2,1) tensor de Boor evaluations, their rational divisions,
+        // the closed-form endpoint evaluations and midpoint use fewer than 128
+        // rounded operations per coordinate. Huge sweep endpoints set the floor.
+        let rounding = gamma(128) * scale;
+        let deviation = result.deviations[0];
+        assert!(deviation.is_finite() && deviation > k.tolerances.approx_tol_3d);
+        assert!(deviation < default_tol);
+        assert!((deviation - p1.distance(p2)).abs() <= rounding);
+
+        let out = Runner.run_rust(&case).unwrap();
+        assert!(out.error.is_none() && out.deferred.is_none() && out.rejected.is_none());
+        assert_eq!(out.values["build"], [0.0]);
+        let geometry_is_valid = |output: &Output| {
+            let raw = &output.values["out"];
+            raw.len() == 32
+                && raw.iter().all(|v| v.is_finite())
+                && raw[..4] == [0.0, 0.0, 0.0, 1.0]
+                && raw[4] == 1.0
+                && raw[5] == result.curves_3d[0].type_code() as f64
+                && raw[6..8] == [0.0, 1.0]
+                && raw[8..11] == [1.0, 1.0, 2.0]
+                && raw[14] == NOW
+                && raw[18] == NOW
+                && raw[19..31]
+                    == [4.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+                && Vec3::new(raw[11], raw[12], raw[13]).distance(midpoint) <= rounding
+                && raw[11..14] == raw[15..18]
+                && (raw[31] - p1.distance(p2)).abs() <= rounding
+                && Vec3::new(raw[11], raw[12], raw[13]).distance(p1) <= raw[31] + rounding
+                && Vec3::new(raw[11], raw[12], raw[13]).distance(p2) <= raw[31] + rounding
+        };
+        assert!(geometry_is_valid(&out));
+
+        // Mutation controls: the existing infinite block sums hide both changes,
+        // while the independent status/definition checks reject them.
+        let encoded = crate::golden::encode(&case.name, &out);
+        for (index, wrong) in [(1, 1001.0), (11, midpoint.x + 1.0)] {
+            let mut corrupted = out.clone();
+            corrupted.values.get_mut("out").unwrap()[index] = wrong;
+            assert_eq!(crate::golden::encode(&case.name, &corrupted), encoded);
+            assert!(!geometry_is_valid(&corrupted));
+        }
+    }
 
     fn op_name(i: &Inputs) -> String {
         match i {

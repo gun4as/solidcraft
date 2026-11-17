@@ -26,6 +26,7 @@ fn schemas_and_the_key_check_agree() {
         "at",
         "direction",
         "family",
+        "flip",
         "length",
         "name",
         "point",

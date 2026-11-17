@@ -749,7 +749,11 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Pt, inputs: &[SelInpu
     let lib = loaded(app, k);
     if lib.is_empty() {
         ui.vertical(|ui| {
-            crate::ui_kit::text(ui, solidcraft_ui_text::tr_label("the parts library is not available"), crate::ui_kit::Text::Note("parts_unavailable"));
+            crate::ui_kit::text(
+                ui,
+                solidcraft_ui_text::tr_label("the parts library is not available"),
+                crate::ui_kit::Text::Note("parts_unavailable"),
+            );
         });
         return false;
     }

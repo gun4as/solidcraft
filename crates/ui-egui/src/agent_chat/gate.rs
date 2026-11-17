@@ -62,18 +62,32 @@ const FILE_EXTENSIONS: &[&str] = &[
     "toml",
 ];
 
-/// Commands that only read (not counted as changes).
+/// Commands that only read (not counted as changes). Section Analysis changes only the view, but
+/// each change is an undo step.
 fn reads_only(id: &str) -> bool {
-    id.starts_with("inspect.")
+    (id.starts_with("inspect.") && id != "inspect.section")
         || id.starts_with("model.")
         || id.ends_with(".inspect")
         || id.ends_with(".list")
-        || matches!(id, "edit.checkpoint" | "render.status" | "render.backends" | "render.settings.get" | "file.slicers" | "engine.describe")
+        || matches!(
+            id,
+            "edit.checkpoint"
+                | "selection.get"
+                | "render.status"
+                | "render.backends"
+                | "render.settings.get"
+                | "file.slicers"
+                | "engine.describe"
+                | "plugin.check"
+        )
 }
 
 /// Commands that read or write a file by their nature: any string they are given in a path
 /// parameter is a file, whatever it looks like.
 fn is_file_verb(id: &str) -> bool {
+    if id == "plugin.inspect" || id == "plugin.check" {
+        return true;
+    }
     id.starts_with("library.") || ["export", "import", "save", "open", "insert", "load", "write", "recover"].iter().any(|v| id.contains(v))
 }
 
@@ -122,6 +136,14 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
     if id.starts_with("app.") || id.starts_with("prefs.") {
         return Verdict::Refuse(format!("`{id}` is not available in the agent chat"));
     }
+    // External executable code always needs a user decision; the digest is not consent by itself.
+    if id.eq_ignore_ascii_case("plugin.run") {
+        let shown =
+            |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default().chars().filter(|c| !c.is_control()).take(200).collect::<String>();
+        let path = shown("path");
+        let entry = shown("entry");
+        return Verdict::Ask(solidcraft_ui_text::format("ui.plugin_run_consent", &[("entry", &entry), ("path", &path)]));
+    }
     // Files, and commands that replace or reload the whole design.
     let file_command = id.starts_with("file.") || id.starts_with("doc.") || matches!(id, "render.export" | "render.start");
     // The question says which program a send to a slicer would start.
@@ -150,7 +172,7 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
 
 /// One request from the agent's tools: `method` and its `params` as the control channel has them.
 pub fn request(method: &str, params: &Value, undo_left: usize) -> Verdict {
-    if !METHODS.contains(&method) {
+    if !METHODS.contains(&method) && !(method == "ui.help" && params.get("item").is_none_or(Value::is_null)) {
         return Verdict::Refuse(format!("`{method}` is not available in the agent chat"));
     }
     match method {
@@ -249,6 +271,7 @@ mod tests {
         assert_eq!(exec("solid.box", json!({"x": 10})), Verdict::Run { change: true });
         assert_eq!(exec("sketch.inspect", json!({"sketch": 1})), Verdict::Run { change: false });
         assert_eq!(exec("inspect.measure", json!({})), Verdict::Run { change: false });
+        assert_eq!(exec("selection.get", json!({})), Verdict::Run { change: false });
         assert_eq!(request("document.inspect", &json!({}), 0), Verdict::Run { change: false });
         assert_eq!(exec("engine.describe", json!({"command": "solid.box"})), Verdict::Run { change: false });
     }
@@ -350,16 +373,44 @@ mod tests {
     }
 
     #[test]
+    fn external_plugin_code_always_requires_consent() {
+        crate::i18n::install();
+        for id in ["plugin.run", "PLUGIN.RUN", "Plugin.Run"] {
+            let verdict = exec(id, json!({"path":"sample","approval":"from-inspect","entry":"make"}));
+            let Verdict::Ask(question) = verdict else { panic!("external plugin needs consent") };
+            assert!(question.contains("sample") && question.contains("make"), "{question}");
+        }
+        assert!(matches!(exec("plugin.inspect", json!({"path":"sample"})), Verdict::Ask(_)));
+        assert!(matches!(exec("plugin.check", json!({"path":"sample"})), Verdict::Ask(_)), "checking a package reads its files");
+    }
+
+    #[test]
     fn undo_asks_only_past_the_turns_own_changes() {
         assert_eq!(request("engine.execute", &json!({"command": "edit.undo"}), 1), Verdict::Run { change: true });
         assert!(matches!(request("engine.execute", &json!({"command": "edit.undo"}), 0), Verdict::Ask(_)));
         let batch = json!({"commands": [{"command": "solid.box"}, {"command": "edit.undo"}, {"command": "edit.undo"}]});
         assert!(matches!(request("engine.batch", &batch, 0), Verdict::Ask(_)));
+        assert_eq!(exec("inspect.section", json!({"plane": "XY"})), Verdict::Run { change: true });
+        let sectioned = json!({"commands": [{"command": "inspect.section", "params": {"plane": "XY"}}, {"command": "edit.undo"}]});
+        assert_eq!(request("engine.batch", &sectioned, 0), Verdict::Run { change: true });
     }
 
     #[test]
     fn the_mcp_server_may_read_its_output_options() {
         assert_eq!(request("mcp.options", &json!({}), 0), Verdict::Run { change: false });
+    }
+
+    #[test]
+    fn the_mcp_server_may_read_build_information_without_running_help_actions() {
+        for params in [json!({}), json!({"item": null})] {
+            assert_eq!(request("ui.help", &params, 0), Verdict::Run { change: false }, "{params}");
+        }
+        for item in ["about", "updates", "shortcuts", "report", "crashes", "docs", "messages", "install_cli", ""] {
+            assert!(matches!(request("ui.help", &json!({"item": item}), 0), Verdict::Refuse(_)), "{item}");
+        }
+        for item in [json!(false), json!(0), json!([]), json!({})] {
+            assert!(matches!(request("ui.help", &json!({"item": item}), 0), Verdict::Refuse(_)), "{item}");
+        }
     }
 
     #[test]

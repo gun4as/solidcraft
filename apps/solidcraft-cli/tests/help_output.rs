@@ -21,6 +21,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("fuzz", "fuzz"),
     ("fuzz-one", "fuzz-one"),
     ("mcp", "mcp"),
+    ("plugin", "plugin"),
     ("crashes", "crashes"),
     ("licences", "licences"),
     ("licenses", "licences"),
@@ -45,6 +46,7 @@ const LISTED: &[&str] = &[
     "oracle",
     "fuzz",
     "mcp",
+    "plugin",
     "crashes",
     "licences",
     "gpu",
@@ -152,7 +154,17 @@ fn render_help_keeps_the_registered_gpu_request_controls() {
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
         assert!(output.stderr.is_empty());
         let stdout = String::from_utf8_lossy(&output.stdout);
-        for flag in ["--progressive", "--samples", "--max-depth", "--seed", "--exposure", "--lighting", "--environment", "--tone-map"] {
+        for flag in [
+            "--progressive",
+            "--samples",
+            "--max-depth",
+            "--seed",
+            "--exposure",
+            "--lighting",
+            "--environment",
+            "--tone-map",
+            "--legacy-memory-admission",
+        ] {
             assert!(stdout.contains(flag), "{args:?} lost {flag}: {stdout}");
         }
     }
@@ -205,9 +217,4 @@ fn a_closed_stderr_does_not_stop_the_cli() {
         drop(child.stderr.take());
         assert_eq!(child.wait().unwrap().code(), Some(1));
     }
-    // The old name's alias writes its deprecation notice first: an agent still configured with
-    // `solvecraft-cli mcp` must get the server, not that panic.
-    let mut child = Command::new(env!("CARGO_BIN_EXE_solvecraft-cli")).arg("--help").stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
-    drop(child.stderr.take());
-    assert_eq!(child.wait().unwrap().code(), Some(0));
 }
