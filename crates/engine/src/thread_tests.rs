@@ -528,9 +528,12 @@ fn a_modelled_thread_cuts_its_own_components_body() {
         "parts.insert",
         json!({"family": "set_screw", "size": "M6", "length": 20, "thread": "modeled", "point": [20, 0, 0], "direction": [0, 0, 1]}),
     );
-    // The pin keeps its faces; the set screw has the thread's many.
+    // The pin keeps its faces; the set screw has the thread's many, far more than one whose
+    // thread is only cosmetic.
+    run(&mut alone, "parts.insert", json!({"family": "set_screw", "size": "M6", "length": 20, "point": [20, 0, 0], "direction": [0, 0, 1]}));
     assert_eq!(faces(&s, "Dowel Pin"), faces(&alone, "Dowel Pin"));
-    assert!(faces(&s, "Set Screw") > 100, "{}", faces(&s, "Set Screw"));
+    let (modelled, cosmetic) = (faces(&s, "Set Screw"), faces(&alone, "Set Screw"));
+    assert!(modelled > cosmetic + 20, "{modelled} faces, {cosmetic} without the modelled thread");
 }
 
 /// The SMLib volume of a body (exact surfaces), for closed-form checks.

@@ -4568,7 +4568,10 @@ mod tests {
             "washer_large_gost",
             "dowel_pin_gost",
         ];
-        assert_eq!(metric[metric.len() - gost.len()..], gost, "{metric:?}");
+        // (The gears, worms and pulleys follow them.)
+        let at = metric.iter().position(|f| *f == gost[0]).unwrap_or(metric.len());
+        assert_eq!(metric.get(at..at + gost.len()), Some(&gost[..]), "{metric:?}");
+        assert_eq!(metric.get(at.wrapping_sub(1)), Some(&"bearing"), "{metric:?}");
         // Each family's range is its standard's.
         for (family, standard, first, last, sizes, lengths) in [
             ("hex_bolt_gost", "GOST 7798-70", "M6", "M48", 15, Some((8.0, 300.0, 35))),
